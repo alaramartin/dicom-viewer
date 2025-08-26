@@ -5,22 +5,78 @@ import * as vscode from 'vscode';
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
+  console.log('DICOM Viewer extension is now active!');
+  
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument(document => {
+      console.log('Editor changed!');
+      if (document) {
+        const filepath = document.fileName;
+        console.log(`Current file: ${filepath}`);
+        vscode.window.showInformationMessage(`File opened: ${filepath}`);
+        
+        if (filepath.includes(".dcm")) {
+          console.log('DICOM file detected!');
+          vscode.window.showInformationMessage(`Opening DICOM file: ${filepath}`);
+          
+          const panel = vscode.window.createWebviewPanel(
+            'dicomViewer',
+            'DICOM Image',
+            vscode.ViewColumn.One,
+            {
+              enableScripts: true,
+              retainContextWhenHidden: true
+            }
+          );
+          
+          const { exec } = require('node:child_process');
+          const scriptPath = context.asAbsolutePath('src/get_image.py');
+          console.log(`Executing: python3 "${scriptPath}" "${filepath}"`);
+          
+          exec(`python3 "${scriptPath}" "${filepath}"`, (error: any, stdout: any, stderr: any) => {
+            if (error) {
+              console.error(`exec error: ${error}`);
+              vscode.window.showErrorMessage(`Python execution error: ${error.message}`);
+              return;
+            }
+            console.log(`Python stdout: ${stdout}`);
+            if (stderr) {
+              console.error(`Python stderr: ${stderr}`);
+            }
+            
+            // get the image returned in base64
+            const lines = stdout.trim().split('\n');
+            const base64Image = lines[lines.length - 1];
+            console.log(`Base64 length: ${base64Image?.length || 0}`);
+            panel.webview.html = getWebviewContent(base64Image);
+          });
+        }
+      }
+    })
+  );
+}
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "dicom-viewer" is now active!');
-
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	const disposable = vscode.commands.registerCommand('dicom-viewer.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from dicom-viewer!');
-	});
-
-	context.subscriptions.push(disposable);
+function getWebviewContent(base64Image: string) {
+  const imageSrc = `data:image/jpeg;base64,${base64Image}`;
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DICOM Image</title>
+</head>
+<body>
+    <h3>DICOM Viewer</h3>
+    <img src="${imageSrc}" width="300" style="border: 1px solid #ccc;" />
+    <p>Base64 length: ${base64Image?.length || 0}</p>
+</body>
+</html>`;
 }
 
 // This method is called when your extension is deactivated
 export function deactivate() {}
+
+
+
+
+// CustomReadonlyEditorProvider

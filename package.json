@@ -9,13 +9,27 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "dicom-viewer.helloWorld",
         "title": "Hello World"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "dicomViewer.dcm",
+        "displayName": "DICOM Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.dcm"
+          }
+        ],
+        "priority": "default"
       }
     ]
   },
@@ -24,7 +38,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
+    "lint": "eslint src --ext ts",
     "test": "vscode-test"
   },
   "devDependencies": {
