@@ -1,7 +1,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-
+/* 
 // This method is called when your extension is activated
 // Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
@@ -76,7 +76,69 @@ function getWebviewContent(base64Image: string) {
 // This method is called when your extension is deactivated
 export function deactivate() {}
 
+*/
 
 
+class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.CustomDocument> {
+	public static register(context: vscode.ExtensionContext): vscode.Disposable {
+		const provider = new DICOMEditorProvider(context);
+		const providerRegistration = vscode.window.registerCustomEditorProvider(DICOMEditorProvider.viewType, provider, {
+			supportsMultipleEditorsPerDocument: false
+		});
+		return providerRegistration;
+	}
 
-// CustomReadonlyEditorProvider
+	private static readonly viewType = 'dicomViewer.dcm';
+
+	constructor(
+		private readonly context: vscode.ExtensionContext
+	) { }
+
+	async resolveCustomEditor(
+		document:vscode.CustomDocument,
+		webviewPanel:vscode.WebviewPanel,
+		token:vscode.CancellationToken
+	): Promise<void> {
+		console.log("editor changed");
+		let filepath = document.uri.fsPath;
+		vscode.window.showInformationMessage(filepath);
+		if (filepath.includes(".dcm")) {
+			vscode.window.showInformationMessage("DICOM!!!!");
+		}
+		webviewPanel.webview.options = {
+			enableScripts: true,
+		};
+		webviewPanel.webview.html = this.getWebviewContent();
+		
+	}
+
+	async openCustomDocument(
+		uri: vscode.Uri,
+		openContext: { backupId?: string },
+		token: vscode.CancellationToken
+	): Promise<vscode.CustomDocument> {
+		return { uri, dispose: () => {} };
+	}
+
+	getWebviewContent() {
+		return `<!DOCTYPE html>
+		<html lang="en">
+		<head>
+			<meta charset="UTF-8">
+			<meta name="viewport" content="width=device-width, initial-scale=1.0">
+			<title>DICOM Image</title>
+		</head>
+		<body>
+			<h3>DICOM Viewer</h3>
+		</body>
+		</html>`;
+	}
+}
+
+export function activate(context: vscode.ExtensionContext) {
+	// Register our custom editor providers
+	context.subscriptions.push(DICOMEditorProvider.register(context));
+}
+
+// This method is called when your extension is deactivated
+export function deactivate() {}
