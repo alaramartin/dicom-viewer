@@ -2,6 +2,7 @@
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { convertDicomToBase64 } from './getImage';
+import { image } from './getImage';
 
 /* 
 // This method is called when your extension is activated
@@ -110,7 +111,11 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			enableScripts: true,
 			};
 			const base64Image = convertDicomToBase64(filepath);
-			webviewPanel.webview.html = this.getWebviewContent(base64Image);
+			const dataUri = `data:image/jpeg;base64,${base64Image}`;
+
+			const realImage = image();
+
+			webviewPanel.webview.html = this.getWebviewContent(dataUri);
 		}
 	}
 
@@ -122,34 +127,8 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		return { uri, dispose: () => {} };
 	}
 
-	// getBase64Image(filepath:string): string {
-	// 	const { exec } = require('node:child_process');
-	// 	const scriptPath = this.context.asAbsolutePath('src/get_image.py');
-	// 	console.log(`Executing: python3 "${scriptPath}" "${filepath}"`);
-		
-	// 	exec(`python3 "${scriptPath}" "${filepath}"`, (error: any, stdout: any, stderr: any) => {
-	// 		if (error) {
-	// 			console.error(`exec error: ${error}`);
-	// 			vscode.window.showErrorMessage(`Python execution error: ${error.message}`);
-	// 			return "hi";
-	// 		}
-	// 		console.log(`Python stdout: ${stdout}`);
-	// 		if (stderr) {
-	// 			console.error(`Python stderr: ${stderr}`);
-	// 		}
-			
-	// 		// get and return the image returned in base64
-	// 		const lines = stdout.trim().split('\n');
-	// 		const base64Image = lines[lines.length - 1];
-	// 		console.log(`Base64 length: ${base64Image?.length || 0}`);
-	// 		return base64Image;
-	// 	});
-	// 	return "hi";
-	// }
-
-	getWebviewContent(base64Image: string) {
-		if (base64Image !== "hi") {
-			const imageSrc = `data:image/jpeg;base64,${base64Image}`;
+	getWebviewContent(base64Image:string) {
+		if (base64Image) {
 			return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
@@ -159,8 +138,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			</head>
 			<body>
 				<h3>DICOM Viewer</h3>
-				<img src="${imageSrc}" width="300" style="border: 1px solid #ccc;" />
-				<p>Base64 length: ${base64Image?.length || 0}</p>
+				<img src="${base64Image}" width="300" style="border: 1px solid #ccc;" />
 			</body>
 			</html>`;
 		}
