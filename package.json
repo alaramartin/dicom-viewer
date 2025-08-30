@@ -36,6 +36,7 @@
     "test": "vscode-test"
   },
   "devDependencies": {
+    "@types/cornerstone-core": "^2.3.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
     "@types/vscode": "^1.103.0",
