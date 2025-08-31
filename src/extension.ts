@@ -1,7 +1,8 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
-import { convertDicomToBase64 } from './getImage';
+import { convertDicomToBase64, getMetadata } from './getImage';
+import { create } from 'domain';
 
 class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.CustomDocument> {
 	public static register(context: vscode.ExtensionContext): vscode.Disposable {
@@ -20,7 +21,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 
 	async resolveCustomEditor(
 		document:vscode.CustomDocument,
-		webviewPanel:vscode.WebviewPanel,
+		imagePanel:vscode.WebviewPanel,
 		token:vscode.CancellationToken
 	): Promise<void> {
 		console.log("editor changed");
@@ -28,17 +29,64 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		vscode.window.showInformationMessage(filepath);
 		if (filepath.includes(".dcm")) {
 			vscode.window.showInformationMessage("DICOM!!!!");
-			webviewPanel.webview.options = {
+			imagePanel.webview.options = {
 				enableScripts: true,
 			};
 			// get the image in base64 and display in webview
 			const base64Image = convertDicomToBase64(filepath);
 			if (base64Image === "compressed") {
-				webviewPanel.webview.html = this.getFailedContent();
+				imagePanel.webview.html = this.getImageFailedContent();
 			}
 			else {
-				webviewPanel.webview.html = this.getWebviewContent(base64Image);
+				imagePanel.webview.html = this.getImageWebviewContent(base64Image);
 			}
+			
+        	let metadataPanel: vscode.WebviewPanel | undefined;
+
+			// create the side-by-side view of metadata
+			const createMetadataPanel = () => {
+				metadataPanel = vscode.window.createWebviewPanel(
+					DICOMEditorProvider.viewType,
+					'DICOM Metadata',
+					{	viewColumn: vscode.ViewColumn.Beside,
+						preserveFocus: true
+					},
+					{ enableScripts: true }
+				);
+
+				const metadata = getMetadata(filepath);
+				metadataPanel.webview.html = this.getMetadataWebviewContent(metadata);
+			};
+
+			const disposeMetadataPanel = () => {
+				if (metadataPanel) {
+					metadataPanel.dispose();
+					metadataPanel = undefined;
+				}
+			};
+
+			createMetadataPanel();
+			
+			// if closed the image panel, also close the corresponding metadata panel
+			imagePanel.onDidDispose(() => {
+				console.log('main DICOM panel closed');
+				disposeMetadataPanel();
+			});
+
+			// if focus is switched away from the image panel, also close the metadata panel
+			// if focus switches back to the image panel, recreate the metadata panel
+			imagePanel.onDidChangeViewState(e => {
+				if (!e.webviewPanel.active) {
+					console.log('main DICOM panel lost focus');
+					disposeMetadataPanel();
+				}
+				else if (e.webviewPanel.active) {
+					console.log('main DICOM re-activated');
+					if (!metadataPanel) {
+						createMetadataPanel();
+					}
+				}
+			});
 			
 		}
 	}
@@ -51,7 +99,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		return { uri, dispose: () => {} };
 	}
 
-	getFailedContent() {
+	getImageFailedContent() {
 		return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
@@ -65,7 +113,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			</html>`;
 	}
 
-	getWebviewContent(base64Image:string) {
+	getImageWebviewContent(base64Image:string) {
 		if (base64Image) {
 			return `<!DOCTYPE html>
 			<html lang="en">
@@ -81,16 +129,44 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			</html>`;
 		}
 		else {
-			// if failed, return a cat picture
 			return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
 				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
-				<title>failed :( here's a cat picture to cheer you up:</title>
+				<title>DICOM Image</title>
 			</head>
 			<body>
-				<img src="https://en.wikipedia.org/wiki/Cat#/media/File:Cat_August_2010-4.jpg" width="300" style="border: 1px solid #ccc;" />
+				<h3>failed</h3>
+			</body>
+			</html>`;
+		}
+	}
+
+	getMetadataWebviewContent(metadata:Array<any>) {
+		if (metadata.length === 1) {
+			return `<!DOCTYPE html>
+			<html lang="en">
+			<head>
+				<meta charset="UTF-8">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>DICOM Metadata</title>
+			</head>
+			<body>
+				<h3>dicom contains no metadata</h3>
+			</body>
+			</html>`;
+		}
+		else {
+			return `<!DOCTYPE html>
+			<html lang="en">
+			<head>
+				<meta charset="UTF-8">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>DICOM Metadata</title>
+			</head>
+			<body>
+				<h3>metadata etc...</h3>
 			</body>
 			</html>`;
 		}
@@ -104,3 +180,25 @@ export function activate(context: vscode.ExtensionContext) {
 
 // This method is called when your extension is deactivated
 export function deactivate() {}
+
+
+
+/*
+for new metadata panel:
+
+
+put it in split-screen
+const panel = vscode.window.createWebviewPanel(
+    'myTextPanel',
+    'My Text Panel',
+    vscode.ViewColumn.Beside, // <-- split-screen
+    { enableScripts: true }
+);
+
+
+use onDidDispose to listen for when the original customeditor is closed, and then also close the new panel
+
+maybe show as a html table?
+^make hovering over each element show the title of the column like (numerical tag) (name of tag) (value) etc
+
+*/

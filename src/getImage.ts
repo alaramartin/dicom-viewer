@@ -111,3 +111,59 @@ export function convertDicomToBase64(filepath: string): string {
         throw new Error(`Failed to convert DICOM: ${error.message}`);
     }
 }
+
+export function getMetadata(filepath: string): Array<any> {
+    // return all metadata of the dicom that is present and isn't binary
+    let metadata = [["Tag", "VR", "Value"]];
+    try {
+        // get the dicom
+        const dicomFile = fs.readFileSync(filepath);
+        const dataSet = dicomParser.parseDicom(dicomFile);
+
+        // iterate over all metadata elements in the dataSet
+        for (const tag in dataSet.elements) {
+            // check if tag exists in dicom
+            if (dataSet.elements.hasOwnProperty(tag)) {
+                const element = dataSet.elements[tag];
+                
+                // dicom VR = value representation, have to deal with different VRs differently (data types)
+
+
+
+                // Get the value of the element using the appropriate helper function
+                // For string elements:
+                if (element.vr === 'AE' || element.vr === 'CS' || element.vr === 'LO' /* etc. */) {
+                    const value = dataSet.string(tag);
+                    console.log(`Tag: ${tag}, VR: ${element.vr}, Value: ${value}`);
+                    metadata.push([tag, element.vr, value ?? '']);
+                }
+                // For sequence elements, you need to iterate further
+                else if (element.vr === 'SQ') {
+                    console.log(`Tag: ${tag}, VR: ${element.vr}, Is a Sequence`);
+                    const sequenceItems = element.items;
+                    if (sequenceItems) {
+                        // Iterate through each item in the sequence
+                        sequenceItems.forEach((item, index) => {
+                            console.log(`  Item #${index + 1}`);
+                            // Recursively call a function to process the nested dataSet
+                            // For a simple print, you can iterate its elements property
+                            for (const subTag in item.dataSet?.elements) {
+                                const subElement = item.dataSet.elements[subTag];
+                                const subValue = item.dataSet.string(subTag);
+                                console.log(`    Tag: ${subTag}, VR: ${subElement.vr}, Value: ${subValue}`);
+                                // fixme: how to mark if it's a SQ vr?
+                                metadata.push([subTag, subElement.vr ?? '', subValue ?? '']);
+                            }
+                        });
+                    }
+                }
+                // You can add more conditions for other VR types like `PN`, `DA`, `TM`, etc.
+                // or simply use `dataSet.string()` or other helpers where appropriate.
+            }
+        }
+    } catch (ex) {
+        console.error('Error parsing byte stream', ex);
+    }
+
+    return metadata;
+}
