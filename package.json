@@ -48,6 +48,7 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
+    "@iwharris/dicom-data-dictionary": "^1.26.0",
     "canvas": "^3.2.0",
     "dcmjs": "^0.45.0",
     "dicom-data-dictionary": "^0.3.1",

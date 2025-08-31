@@ -1,8 +1,6 @@
 import * as dicomParser from 'dicom-parser';
-import dicomDataDictionary from 'dicom-data-dictionary';
 import * as fs from 'fs';
 import { createCanvas } from 'canvas';
-import { DicomMetaDictionary } from 'dcmjs';
 
 export function convertDicomToBase64(filepath: string): string {
     try {
@@ -124,103 +122,32 @@ export function getMetadata(filepath: string): Array<any> {
             if (dataSet.elements.hasOwnProperty(tag)) {
                 // get the info of the tag itself
                 let tagName = 'Unknown';
-                try {
-                    const cleanTag = tag.replace('x', '');
-                    
-                    // manual mapping for DICOM tags
-                    const commonTags: {[key: string]: string} = {
-                        '00020000': 'File Meta Information Group Length',
-                        '00020001': 'File Meta Information Version',
-                        '00020002': 'Media Storage SOP Class UID',
-                        '00020003': 'Media Storage SOP Instance UID',
-                        '00020010': 'Transfer Syntax UID',
-                        '00020012': 'Implementation Class UID',
-                        '00020013': 'Implementation Version Name',
-                        '00020016': 'Source Application Entity Title',
-                        '00080005': 'Specific Character Set',
-                        '00080008': 'Image Type',
-                        '00080012': 'Instance Creation Date',
-                        '00080013': 'Instance Creation Time',
-                        '00080016': 'SOP Class UID',
-                        '00080018': 'SOP Instance UID',
-                        '00080020': 'Study Date',
-                        '00080021': 'Series Date',
-                        '00080022': 'Acquisition Date',
-                        '00080023': 'Content Date',
-                        '00080030': 'Study Time',
-                        '00080031': 'Series Time',
-                        '00080032': 'Acquisition Time',
-                        '00080033': 'Content Time',
-                        '00080050': 'Accession Number',
-                        '00080060': 'Modality',
-                        '00080070': 'Manufacturer',
-                        '00080080': 'Institution Name',
-                        '00080090': 'Referring Physician Name',
-                        '00081010': 'Station Name',
-                        '00081030': 'Study Description',
-                        '0008103E': 'Series Description',
-                        '00081040': 'Institutional Department Name',
-                        '00081050': 'Performing Physician Name',
-                        '00081090': 'Manufacturer Model Name',
-                        '00100010': 'Patient Name',
-                        '00100020': 'Patient ID',
-                        '00100030': 'Patient Birth Date',
-                        '00100040': 'Patient Sex',
-                        '00101010': 'Patient Age',
-                        '00101020': 'Patient Size',
-                        '00101030': 'Patient Weight',
-                        '00102160': 'Ethnic Group',
-                        '00102180': 'Occupation',
-                        '001021B0': 'Additional Patient History',
-                        '00180015': 'Body Part Examined',
-                        '00180050': 'Slice Thickness',
-                        '00180060': 'KVP',
-                        '00180088': 'Spacing Between Slices',
-                        '00181000': 'Device Serial Number',
-                        '00181020': 'Software Version',
-                        '00181030': 'Protocol Name',
-                        '00181151': 'X-Ray Tube Current',
-                        '00181152': 'Exposure',
-                        '00181210': 'Convolution Kernel',
-                        '00200010': 'Study ID',
-                        '00200011': 'Series Number',
-                        '00200012': 'Acquisition Number',
-                        '00200013': 'Instance Number',
-                        '00200032': 'Image Position Patient',
-                        '00200037': 'Image Orientation Patient',
-                        '00200052': 'Frame of Reference UID',
-                        '00200060': 'Laterality',
-                        '00201002': 'Images in Acquisition',
-                        '00280002': 'Samples per Pixel',
-                        '00280004': 'Photometric Interpretation',
-                        '00280008': 'Number of Frames',
-                        '00280010': 'Rows',
-                        '00280011': 'Columns',
-                        '00280030': 'Pixel Spacing',
-                        '00280100': 'Bits Allocated',
-                        '00280101': 'Bits Stored',
-                        '00280102': 'High Bit',
-                        '00280103': 'Pixel Representation',
-                        '00281050': 'Window Center',
-                        '00281051': 'Window Width',
-                        '00281052': 'Rescale Intercept',
-                        '00281053': 'Rescale Slope',
-                        '00281054': 'Rescale Type',
-                        '7FE00010': 'Pixel Data'
-                    };
-                    tagName = commonTags[cleanTag] || `Unknown (${cleanTag})`;
-                } catch (e) {
-                    console.log(`Error getting tag name for ${tag}:`, e);
-                    tagName = 'Unknown';
-                }
-
+                let vr = 'UN';
+                let cleanTag = tag.replace('x', '').toUpperCase();
                 const element = dataSet.elements[tag];
+
+                try {
+                    const dictionary = require('@iwharris/dicom-data-dictionary');
+                    const elem = dictionary.get_element(cleanTag);
+                    console.log("name:", elem["name"]);
+                    console.log("vr:", elem["vr"]);
+
+                    tagName = elem["name"];
+                    vr = elem["vr"];
+                }
+                catch (e) {
+                    console.log("iwharris", e);
+                }
+                
+                // use the VR from the element if available, otherwise use our lookup
+                const finalVr = element.vr || vr;
+                
                 let value = '';
                 
                 // handle different vr types
-                if (element.vr === 'SQ') {
+                if (finalVr === 'SQ') {
                     value = '[Sequence]';
-                } else if (element.vr === 'OB' || element.vr === 'OW' || element.vr === 'OF') {
+                } else if (finalVr === 'OB' || finalVr === 'OW' || finalVr === 'OF') {
                     value = '[Binary Data]';
                 } else {
                     // get string representation for text/numeric VRs
@@ -230,7 +157,7 @@ export function getMetadata(filepath: string): Array<any> {
                         value = '[Cannot display]';
                     }
                 }
-                metadata.push([tag, tagName, element.vr || 'UN', value]);
+                metadata.push([tag, tagName, finalVr, value]);
             }
         }
     } catch (ex) {

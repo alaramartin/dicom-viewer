@@ -37,3 +37,5 @@ pids
 # Temporary files
 .tmp/
 .temp/
+
+tagLookupTable.ts
