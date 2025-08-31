@@ -1,6 +1,8 @@
 import * as dicomParser from 'dicom-parser';
+import dicomDataDictionary from 'dicom-data-dictionary';
 import * as fs from 'fs';
 import { createCanvas } from 'canvas';
+import { DicomMetaDictionary } from 'dcmjs';
 
 export function convertDicomToBase64(filepath: string): string {
     try {
@@ -113,57 +115,126 @@ export function convertDicomToBase64(filepath: string): string {
 }
 
 export function getMetadata(filepath: string): Array<any> {
-    // return all metadata of the dicom that is present and isn't binary
-    let metadata = [["Tag", "VR", "Value"]];
+    let metadata = [["Hex Tag", "Tag Name", "VR", "Value"]];
     try {
-        // get the dicom
         const dicomFile = fs.readFileSync(filepath);
         const dataSet = dicomParser.parseDicom(dicomFile);
 
-        // iterate over all metadata elements in the dataSet
         for (const tag in dataSet.elements) {
-            // check if tag exists in dicom
             if (dataSet.elements.hasOwnProperty(tag)) {
-                const element = dataSet.elements[tag];
-                
-                // dicom VR = value representation, have to deal with different VRs differently (data types)
-
-
-
-                // Get the value of the element using the appropriate helper function
-                // For string elements:
-                if (element.vr === 'AE' || element.vr === 'CS' || element.vr === 'LO' /* etc. */) {
-                    const value = dataSet.string(tag);
-                    console.log(`Tag: ${tag}, VR: ${element.vr}, Value: ${value}`);
-                    metadata.push([tag, element.vr, value ?? '']);
+                // get the info of the tag itself
+                let tagName = 'Unknown';
+                try {
+                    const cleanTag = tag.replace('x', '');
+                    
+                    // manual mapping for DICOM tags
+                    const commonTags: {[key: string]: string} = {
+                        '00020000': 'File Meta Information Group Length',
+                        '00020001': 'File Meta Information Version',
+                        '00020002': 'Media Storage SOP Class UID',
+                        '00020003': 'Media Storage SOP Instance UID',
+                        '00020010': 'Transfer Syntax UID',
+                        '00020012': 'Implementation Class UID',
+                        '00020013': 'Implementation Version Name',
+                        '00020016': 'Source Application Entity Title',
+                        '00080005': 'Specific Character Set',
+                        '00080008': 'Image Type',
+                        '00080012': 'Instance Creation Date',
+                        '00080013': 'Instance Creation Time',
+                        '00080016': 'SOP Class UID',
+                        '00080018': 'SOP Instance UID',
+                        '00080020': 'Study Date',
+                        '00080021': 'Series Date',
+                        '00080022': 'Acquisition Date',
+                        '00080023': 'Content Date',
+                        '00080030': 'Study Time',
+                        '00080031': 'Series Time',
+                        '00080032': 'Acquisition Time',
+                        '00080033': 'Content Time',
+                        '00080050': 'Accession Number',
+                        '00080060': 'Modality',
+                        '00080070': 'Manufacturer',
+                        '00080080': 'Institution Name',
+                        '00080090': 'Referring Physician Name',
+                        '00081010': 'Station Name',
+                        '00081030': 'Study Description',
+                        '0008103E': 'Series Description',
+                        '00081040': 'Institutional Department Name',
+                        '00081050': 'Performing Physician Name',
+                        '00081090': 'Manufacturer Model Name',
+                        '00100010': 'Patient Name',
+                        '00100020': 'Patient ID',
+                        '00100030': 'Patient Birth Date',
+                        '00100040': 'Patient Sex',
+                        '00101010': 'Patient Age',
+                        '00101020': 'Patient Size',
+                        '00101030': 'Patient Weight',
+                        '00102160': 'Ethnic Group',
+                        '00102180': 'Occupation',
+                        '001021B0': 'Additional Patient History',
+                        '00180015': 'Body Part Examined',
+                        '00180050': 'Slice Thickness',
+                        '00180060': 'KVP',
+                        '00180088': 'Spacing Between Slices',
+                        '00181000': 'Device Serial Number',
+                        '00181020': 'Software Version',
+                        '00181030': 'Protocol Name',
+                        '00181151': 'X-Ray Tube Current',
+                        '00181152': 'Exposure',
+                        '00181210': 'Convolution Kernel',
+                        '00200010': 'Study ID',
+                        '00200011': 'Series Number',
+                        '00200012': 'Acquisition Number',
+                        '00200013': 'Instance Number',
+                        '00200032': 'Image Position Patient',
+                        '00200037': 'Image Orientation Patient',
+                        '00200052': 'Frame of Reference UID',
+                        '00200060': 'Laterality',
+                        '00201002': 'Images in Acquisition',
+                        '00280002': 'Samples per Pixel',
+                        '00280004': 'Photometric Interpretation',
+                        '00280008': 'Number of Frames',
+                        '00280010': 'Rows',
+                        '00280011': 'Columns',
+                        '00280030': 'Pixel Spacing',
+                        '00280100': 'Bits Allocated',
+                        '00280101': 'Bits Stored',
+                        '00280102': 'High Bit',
+                        '00280103': 'Pixel Representation',
+                        '00281050': 'Window Center',
+                        '00281051': 'Window Width',
+                        '00281052': 'Rescale Intercept',
+                        '00281053': 'Rescale Slope',
+                        '00281054': 'Rescale Type',
+                        '7FE00010': 'Pixel Data'
+                    };
+                    tagName = commonTags[cleanTag] || `Unknown (${cleanTag})`;
+                } catch (e) {
+                    console.log(`Error getting tag name for ${tag}:`, e);
+                    tagName = 'Unknown';
                 }
-                // For sequence elements, you need to iterate further
-                else if (element.vr === 'SQ') {
-                    console.log(`Tag: ${tag}, VR: ${element.vr}, Is a Sequence`);
-                    const sequenceItems = element.items;
-                    if (sequenceItems) {
-                        // Iterate through each item in the sequence
-                        sequenceItems.forEach((item, index) => {
-                            console.log(`  Item #${index + 1}`);
-                            // Recursively call a function to process the nested dataSet
-                            // For a simple print, you can iterate its elements property
-                            for (const subTag in item.dataSet?.elements) {
-                                const subElement = item.dataSet.elements[subTag];
-                                const subValue = item.dataSet.string(subTag);
-                                console.log(`    Tag: ${subTag}, VR: ${subElement.vr}, Value: ${subValue}`);
-                                // fixme: how to mark if it's a SQ vr?
-                                metadata.push([subTag, subElement.vr ?? '', subValue ?? '']);
-                            }
-                        });
+
+                const element = dataSet.elements[tag];
+                let value = '';
+                
+                // handle different vr types
+                if (element.vr === 'SQ') {
+                    value = '[Sequence]';
+                } else if (element.vr === 'OB' || element.vr === 'OW' || element.vr === 'OF') {
+                    value = '[Binary Data]';
+                } else {
+                    // get string representation for text/numeric VRs
+                    try {
+                        value = dataSet.string(tag) || '[Empty]';
+                    } catch (e) {
+                        value = '[Cannot display]';
                     }
                 }
-                // You can add more conditions for other VR types like `PN`, `DA`, `TM`, etc.
-                // or simply use `dataSet.string()` or other helpers where appropriate.
+                metadata.push([tag, tagName, element.vr || 'UN', value]);
             }
         }
     } catch (ex) {
-        console.error('Error parsing byte stream', ex);
+        console.error('Error parsing DICOM', ex);
     }
-
     return metadata;
 }

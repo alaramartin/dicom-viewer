@@ -49,6 +49,8 @@
   },
   "dependencies": {
     "canvas": "^3.2.0",
+    "dcmjs": "^0.45.0",
+    "dicom-data-dictionary": "^0.3.1",
     "dicom-parser": "^1.8.21"
   }
 }
