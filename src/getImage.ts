@@ -1,6 +1,6 @@
 import * as dicomParser from 'dicom-parser';
 import * as fs from 'fs';
-import { Canvas } from "skia-canvas";
+import { PNG } from 'pngjs';
 
 export function convertDicomToBase64(filepath: string): string {
     try {
@@ -61,10 +61,8 @@ export function convertDicomToBase64(filepath: string): string {
 
         console.log(`Pixel range: ${min} - ${max}, valid pixels: ${validPixelCount}`);
 
-        // create the canvas to convert pixel data to an image
-        const canvas = new Canvas(cols, rows);
-        const ctx = canvas.getContext("2d");
-        const imageData = ctx.createImageData(cols, rows);
+        // create PNG
+        const png = new PNG({ width: cols, height: rows });
 
         // convert pixels with proper windowing
         for (let i = 0; i < validPixelCount; i++) {
@@ -95,18 +93,19 @@ export function convertDicomToBase64(filepath: string): string {
             gray = Math.max(0, Math.min(255, gray)); 
             
             const idx = i * 4;
-            if (idx + 3 < imageData.data.length) {
-                imageData.data[idx] = gray;     // R
-                imageData.data[idx + 1] = gray; // G  
-                imageData.data[idx + 2] = gray; // B
-                imageData.data[idx + 3] = 255;  // A
+            if (idx + 3 < png.data.length) {
+                png.data[idx] = gray;     // R
+                png.data[idx + 1] = gray; // G  
+                png.data[idx + 2] = gray; // B
+                png.data[idx + 3] = 255;  // A
             }
         }
 
-        ctx.putImageData(imageData, 0, 0);
-        return canvas.toDataURL('png');
+        // convert PNG to base64
+        const buffer = PNG.sync.write(png);
+        return 'data:image/png;base64,' + buffer.toString('base64');
         
-    } catch (error:any) {
+    } catch (error: any) {
         console.error('DICOM conversion error:', error);
         throw new Error(`Failed to convert DICOM: ${error.message}`);
     }
