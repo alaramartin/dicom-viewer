@@ -9,7 +9,7 @@ Visualize DICOM images and analyze corresponding metadata all in one place, with
 - Metadata panel automatically closes when focus is shifted away from the original DICOM image, reducing workspace clutter
 
 ### Example
-![example](example.png)
+![example](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/example.png)
 
 Note: this extension currently cannot display the official name or VR of private tags and does not support displaying compressed DICOMs.
 
