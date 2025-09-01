@@ -3,6 +3,11 @@
   "displayName": "dicom-viewer",
   "description": "LEAVE BLANK",
   "version": "0.0.1",
+  "publisher": "your-name",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alaramartin/dicom-viewer.git"
+  },
   "engines": {
     "vscode": "^1.103.0"
   },
@@ -36,9 +41,9 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/cornerstone-core": "^2.3.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
+    "@types/sharp": "^0.31.1",
     "@types/vscode": "^1.103.0",
     "@typescript-eslint/eslint-plugin": "^8.39.0",
     "@typescript-eslint/parser": "^8.39.0",
@@ -49,9 +54,10 @@
   },
   "dependencies": {
     "@iwharris/dicom-data-dictionary": "^1.26.0",
-    "canvas": "^3.2.0",
     "dcmjs": "^0.45.0",
     "dicom-data-dictionary": "^0.3.1",
-    "dicom-parser": "^1.8.21"
+    "dicom-parser": "^1.8.21",
+    "sharp": "^0.34.3",
+    "skia-canvas": "^3.0.6"
   }
 }

@@ -1,6 +1,6 @@
 import * as dicomParser from 'dicom-parser';
 import * as fs from 'fs';
-import { createCanvas } from 'canvas';
+import { Canvas } from "skia-canvas";
 
 export function convertDicomToBase64(filepath: string): string {
     try {
@@ -62,8 +62,8 @@ export function convertDicomToBase64(filepath: string): string {
         console.log(`Pixel range: ${min} - ${max}, valid pixels: ${validPixelCount}`);
 
         // create the canvas to convert pixel data to an image
-        const canvas = createCanvas(cols, rows);
-        const ctx = canvas.getContext('2d');
+        const canvas = new Canvas(cols, rows);
+        const ctx = canvas.getContext("2d");
         const imageData = ctx.createImageData(cols, rows);
 
         // convert pixels with proper windowing
@@ -104,7 +104,7 @@ export function convertDicomToBase64(filepath: string): string {
         }
 
         ctx.putImageData(imageData, 0, 0);
-        return canvas.toDataURL('image/png');
+        return canvas.toDataURL('png');
         
     } catch (error:any) {
         console.error('DICOM conversion error:', error);
