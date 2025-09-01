@@ -1,5 +1,3 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 import { convertDicomToBase64, getMetadata } from './getImage';
 
@@ -23,11 +21,8 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		imagePanel:vscode.WebviewPanel,
 		token:vscode.CancellationToken
 	): Promise<void> {
-		console.log("editor changed");
 		let filepath = document.uri.fsPath;
-		vscode.window.showInformationMessage(filepath);
 		if (filepath.includes(".dcm")) {
-			vscode.window.showInformationMessage("DICOM!!!!");
 			imagePanel.webview.options = {
 				enableScripts: true,
 			};
@@ -68,7 +63,6 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			
 			// if closed the image panel, also close the corresponding metadata panel
 			imagePanel.onDidDispose(() => {
-				console.log('main DICOM panel closed');
 				disposeMetadataPanel();
 			});
 
@@ -76,11 +70,9 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			// if focus switches back to the image panel, recreate the metadata panel
 			imagePanel.onDidChangeViewState(e => {
 				if (!e.webviewPanel.visible) {
-					console.log('main DICOM panel lost focus');
 					disposeMetadataPanel();
 				}
 				else if (e.webviewPanel.visible && !metadataPanel) {
-					console.log('main DICOM re-activated');
 					if (!metadataPanel) {
 						createMetadataPanel();
 					}
@@ -121,8 +113,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				<title>DICOM Image</title>
 			</head>
 			<body>
-				<h3>DICOM Viewer</h3>
-				<img src="${base64Image}" width="300" style="border: 1px solid #ccc;" />
+				<img src="${base64Image}" width="80%" style="border: 1px solid #ccc;" />
 			</body>
 			</html>`;
 		}
@@ -142,102 +133,101 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 	}
 
 	getMetadataWebviewContent(metadata: Array<any>) {
-    if (metadata.length === 1) {
-        return `<!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>DICOM Metadata</title>
-        </head>
-        <body>
-            <h3>dicom contains no metadata</h3>
-        </body>
-        </html>`;
-    }
-    else {
-        // convert 2D array to HTML table
-        let tableRows = '';
-        
-        metadata.forEach((row, index) => {
-            if (index === 0) {
-                // header row
-                tableRows += '<thead><tr>';
-                row.forEach((cell: any) => {
-                    tableRows += `<th>${cell}</th>`;
-                });
-                tableRows += '</tr></thead><tbody>';
-            } else {
-                // data rows
-                tableRows += '<tr>';
-                row.forEach((cell: any) => {
-                    tableRows += `<td>${cell}</td>`;
-                });
-                tableRows += '</tr>';
-            }
-        });
-        tableRows += '</tbody>';
+		if (metadata.length === 1) {
+			return `<!DOCTYPE html>
+			<html lang="en">
+			<head>
+				<meta charset="UTF-8">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>DICOM Metadata</title>
+			</head>
+			<body>
+				<h3>dicom contains no metadata</h3>
+			</body>
+			</html>`;
+		}
+		else {
+			// convert 2D array to HTML table
+			let tableRows = '';
+			
+			metadata.forEach((row, index) => {
+				if (index === 0) {
+					// header row
+					tableRows += '<thead><tr>';
+					row.forEach((cell: any) => {
+						tableRows += `<th>${cell}</th>`;
+					});
+					tableRows += '</tr></thead><tbody>';
+				} else {
+					// data rows
+					tableRows += '<tr>';
+					row.forEach((cell: any) => {
+						tableRows += `<td>${cell}</td>`;
+					});
+					tableRows += '</tr>';
+				}
+			});
+			tableRows += '</tbody>';
 
-        return `<!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>DICOM Metadata</title>
-            <style>
-                body {
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                    margin: 10px;
-                    background-color: var(--vscode-editor-background);
-                    color: var(--vscode-editor-foreground);
-                }
-                h3 {
-                    color: var(--vscode-editor-foreground);
-                    margin-bottom: 15px;
-                }
-                table {
-                    border-collapse: collapse;
-                    width: 100%;
-                    font-size: 12px;
-                }
-                th, td {
-                    border: 1px solid var(--vscode-panel-border);
-                    padding: 8px;
-                    text-align: left;
-                }
-                th {
-                    background-color: var(--vscode-editor-selectionBackground);
-                    font-weight: bold;
-                    position: sticky;
-                    top: 0;
-                }
-                tr:nth-child(even) {
-                    background-color: var(--vscode-list-hoverBackground);
-                }
-                tr:hover {
-                    background-color: var(--vscode-list-activeSelectionBackground);
-                }
-                td {
-                    word-break: break-word;
-                    max-width: 200px;
-                }
-            </style>
-        </head>
-        <body>
-            <h3>DICOM Metadata</h3>
-            <table>
-                ${tableRows}
-            </table>
-        </body>
-        </html>`;
-    }
-}
+			return `<!DOCTYPE html>
+			<html lang="en">
+			<head>
+				<meta charset="UTF-8">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>DICOM Metadata</title>
+				<style>
+					body {
+						font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+						margin: 10px;
+						background-color: var(--vscode-editor-background);
+						color: var(--vscode-editor-foreground);
+					}
+					h3 {
+						color: var(--vscode-editor-foreground);
+						margin-bottom: 15px;
+					}
+					table {
+						border-collapse: collapse;
+						width: 100%;
+						font-size: 12px;
+					}
+					th, td {
+						border: 1px solid var(--vscode-panel-border);
+						padding: 8px;
+						text-align: left;
+					}
+					th {
+						background-color: var(--vscode-editor-selectionBackground);
+						font-weight: bold;
+						position: sticky;
+						top: 0;
+					}
+					tr:nth-child(even) {
+						background-color: var(--vscode-list-hoverBackground);
+					}
+					tr:hover {
+						background-color: var(--vscode-list-activeSelectionBackground);
+					}
+					td {
+						word-break: break-word;
+						max-width: 200px;
+					}
+				</style>
+			</head>
+			<body>
+				<table>
+					${tableRows}
+				</table>
+			</body>
+			</html>`;
+		}
+	}
 }
 
 export function activate(context: vscode.ExtensionContext) {
-	// Register our custom editor providers
+	// register custom editor provider
 	context.subscriptions.push(DICOMEditorProvider.register(context));
 }
 
-// This method is called when your extension is deactivated
+// called when extension is deactivated
 export function deactivate() {}

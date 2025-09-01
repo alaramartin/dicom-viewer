@@ -39,3 +39,4 @@ pids
 .temp/
 
 tagLookupTable.ts
+vsc-extension-quickstart.md

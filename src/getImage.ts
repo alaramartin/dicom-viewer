@@ -19,7 +19,6 @@ export function convertDicomToBase64(filepath: string): string {
         const pixelData = dataSet.elements.x7fe00010; // this is the pixel array
         const modality = dataSet.string('x00080060') || 'UNKNOWN';
         
-        console.log(`DICOM info: ${modality}, ${cols}x${rows}, ${bitsAllocated}/${bitsStored} bits, samples: ${samplesPerPixel}, photometric: ${photometricInterpretation}`);
 
         if (!pixelData || !rows || !cols) {
             throw new Error('Missing DICOM data');
@@ -29,7 +28,6 @@ export function convertDicomToBase64(filepath: string): string {
         const bytesPerSample = Math.ceil(bitsAllocated / 8);
         const expectedLength = rows * cols * samplesPerPixel * bytesPerSample;
         
-        console.log(`Expected pixel data length: ${expectedLength}, actual: ${pixelData.length}`);
         if (expectedLength !== pixelData.length) {
             return "compressed";
         }
@@ -58,8 +56,6 @@ export function convertDicomToBase64(filepath: string): string {
             min = Math.min(min, pixel);
             max = Math.max(max, pixel);
         }
-
-        console.log(`Pixel range: ${min} - ${max}, valid pixels: ${validPixelCount}`);
 
         // create PNG
         const png = new PNG({ width: cols, height: rows });
@@ -128,9 +124,6 @@ export function getMetadata(filepath: string): Array<any> {
                 try {
                     const dictionary = require('@iwharris/dicom-data-dictionary');
                     const elem = dictionary.get_element(cleanTag);
-                    console.log("name:", elem["name"]);
-                    console.log("vr:", elem["vr"]);
-
                     tagName = elem["name"];
                     vr = elem["vr"];
                 }

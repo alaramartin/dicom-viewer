@@ -1,9 +1,10 @@
 {
   "name": "dicom-viewer",
-  "displayName": "dicom-viewer",
-  "description": "LEAVE BLANK",
+  "displayName": "DICOM Viewer",
+  "description": "View DICOM images and their corresponding metadata side-by-side, right in your VSCode editor.",
   "version": "0.0.1",
-  "publisher": "your-name",
+  "publisher": "alarm",
+  "icon": "dicom-logo.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/alaramartin/dicom-viewer.git"
@@ -12,7 +13,18 @@
     "vscode": "^1.103.0"
   },
   "categories": [
+    "Visualization",
     "Other"
+  ],
+  "keywords": [
+    "vscode",
+    "extension",
+    "dcm",
+    "dicom",
+    "viewer",
+    "medical",
+    "radiology",
+    "imaging"
   ],
   "activationEvents": [
     "onStartupFinished"
