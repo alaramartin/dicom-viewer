@@ -9,7 +9,7 @@ Open DICOM (.dcm) files directly in VS Code. View both the image and associated 
 - Activates as soon as you click on a .dcm file
 
 ### Example
-![example](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/example.png)
+![example](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/example-dicom.png)
 
 Note: this extension currently does not support displaying compressed images or the official name/VR of private tags.
 

@@ -4,7 +4,7 @@
   "description": "View DICOM images and their corresponding metadata side-by-side, right in your VS Code editor.",
   "version": "0.1.0",
   "publisher": "alarm",
-  "icon": "dicom-logo.png",
+  "icon": "logo.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/alaramartin/dicom-viewer.git"
