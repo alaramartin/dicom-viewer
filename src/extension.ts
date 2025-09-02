@@ -53,8 +53,23 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				const editScriptUri = vscode.Uri.file("editDicom.ts");
 				metadataPanel.webview.html = this.getMetadataWebviewContent(metadata, editScriptUri);
 
-				// todo: here, add metadataPanel.webview.ondidreceivemessage to handle when the webview sends a message to update the dicom
-				// in this listener, call the functions in editDicom.ts
+				// handle messages from the webview - call functions from editDicom for appropriate commands
+				metadataPanel.webview.onDidReceiveMessage(
+					message => {
+						switch (message.command) {
+							case 'save':
+								// call editDicom.ts function
+								console.log(`save message received with ${message.tag} and ${message.value}`);
+								break;
+							case 'remove':
+								// call editDicom.ts function
+								console.log(`remove message received with ${message.tag}`);
+								break;
+						}
+					},
+					undefined,
+					this.context.subscriptions
+				);
 			};
 
 			const disposeMetadataPanel = () => {
@@ -279,7 +294,6 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							}
 							// enter button has the same functionality as clicking save
 							if (e.key == "Enter" && currentEditingCell) {
-								console.log("entered");
 								const newValue = currentEditingCell.textContent;
 								// check if the value changed at all
 								if (newValue !== ogValue) {
@@ -287,7 +301,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									const row = currentEditingCell.closest('tr');
                     				const hexTag = row.cells[0].textContent.trim();
 									vscode.postMessage({
-										message: "save",
+										command: "save",
 										tag: hexTag,
 										value: newValue
 									});
@@ -303,7 +317,6 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						document.addEventListener("click", function(e) {
 							// check if the button was the save button
 							if (e.target.classList.contains("save-edits")) {
-								console.log("saved");
 								const newValue = currentEditingCell.textContent;
 								// check if the value changed at all
 								if (newValue !== ogValue) {
@@ -311,13 +324,12 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									const row = currentEditingCell.closest('tr');
                     				const hexTag = row.cells[0].textContent.trim();
 									vscode.postMessage({
-										message: "save",
+										command: "save",
 										tag: hexTag,
 										value: newValue
 									});
 								}
 								// remove focus from the cell and remove buttons row
-								console.log("removing");
 								currentEditingCell = null;
 								removeButtonsRow();
 							}
@@ -327,11 +339,10 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									const row = currentEditingCell.closest('tr');
                     				const hexTag = row.cells[0].textContent.trim();
 									vscode.postMessage({
-										message: "remove",
+										command: "remove",
 										tag: hexTag
 									});
 									// remove focus from the cell and remove buttons row
-									console.log("removing");
 									currentEditingCell = null;
 									removeButtonsRow();
 							}
@@ -339,7 +350,6 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							else if (e.target.classList.contains("discard")) {
 								currentEditingCell.textContent = ogValue;
 								currentEditingCell.blur();
-								console.log("removing");
 								currentEditingCell = null;
 								removeButtonsRow();
 							}
