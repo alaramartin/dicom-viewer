@@ -141,6 +141,17 @@ export function getMetadata(filepath: string): Array<any> {
                     value = '[Sequence]';
                 } else if (finalVr === 'OB' || finalVr === 'OW' || finalVr === 'OF') {
                     value = '[Binary Data]';
+                } else if (finalVr === 'DA') {
+                    // if the VR is a date, make it more readable format (YYYY/MM/DD)
+                    const dateStr = dataSet.string(tag);
+                    if (dateStr && dateStr.length === 8) {
+                        // DICOM DA format is YYYYMMDD
+                        value = `${dateStr.slice(0, 4)}/${dateStr.slice(4, 6)}/${dateStr.slice(6, 8)}`;
+                    } else if (dateStr) {
+                        value = dateStr;
+                    } else {
+                        value = '[Empty]';
+                    }
                 } else {
                     // get string representation for text/numeric VRs
                     try {

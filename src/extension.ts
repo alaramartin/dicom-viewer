@@ -98,7 +98,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				<title>DICOM Image</title>
 			</head>
 			<body>
-				<h3>compressed image not supported</h3>
+				<h3>Compressed DICOM images currently not supported</h3>
 			</body>
 			</html>`;
 	}
@@ -126,7 +126,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				<title>DICOM Image</title>
 			</head>
 			<body>
-				<h3>failed</h3>
+				<h3>uh oh, something went wrong</h3>
 			</body>
 			</html>`;
 		}
@@ -142,7 +142,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				<title>DICOM Metadata</title>
 			</head>
 			<body>
-				<h3>dicom contains no metadata</h3>
+				<h3>DICOM contains no metadata</h3>
 			</body>
 			</html>`;
 		}

@@ -16,7 +16,7 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# IDE/Editor files (optional - you may want to keep .vscode/ for shared settings)
+# IDE/Editor files
 .idea/
 *.swp
 *.swo
