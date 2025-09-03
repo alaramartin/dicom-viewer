@@ -1,5 +1,6 @@
 import * as dicomParser from 'dicom-parser';
 import * as fs from 'fs';
+import { normalize } from 'path';
 import { PNG } from 'pngjs';
 
 export function convertDicomToBase64(filepath: string): string {
@@ -132,7 +133,8 @@ export function getMetadata(filepath: string): Array<any> {
                 }
                 
                 // use the VR from the element if available, otherwise use our lookup
-                const finalVr = element.vr || vr;
+                let finalVr = element.vr || vr;
+                finalVr = normalizeVR(finalVr);
                 
                 let value = '';
                 
@@ -168,4 +170,26 @@ export function getMetadata(filepath: string): Array<any> {
         console.error('Error parsing DICOM', ex);
     }
     return metadata;
+}
+
+// fixes invalid VRs
+function normalizeVR(vr:string) {
+    // full list of every valid VR
+    const validVrList = [
+        "AE", "AS", "AT", "CS", "DA", "DS", "DT", "FL", "FD", "IS", "LO", "LT", 
+        "OB", "OD", "OF", "OW", "PN", "SH", "SL", "SQ", "SS", "ST", "TM", "UI",
+        "UL", "UN", "US", "UT"
+    ];
+    // dict of some common invalid -> valid VR mappings
+    const commonMappings: { [key:string]:string } = {
+        "XS": "US",
+        "OX": "OW"
+    };
+
+    if (!validVrList.includes(vr)) {
+        return commonMappings[vr] ?? "UN";
+    }
+    else {
+        return vr;
+    }
 }

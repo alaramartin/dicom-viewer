@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { convertDicomToBase64, getMetadata } from './getImage';
-import { saveDicomEdit, saveTagRemoval } from './editDicom';
+import { saveDicomEdit, removeDicomTag } from './editDicom';
 
 class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.CustomDocument> {
 	public static register(context: vscode.ExtensionContext): vscode.Disposable {
@@ -68,7 +68,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								else {
 									// fixme: ALSO, if the VR is a DATE vr, remove the slashes in the string before passing into function, and add the slashes back if appropriate?
 									// call appropriate editDicom.ts function
-									saveDicomEdit(message.tag, message.value, filepath);
+									saveDicomEdit(message.tag, message.vr, message.value, filepath);
 								}
 								break;
 							case 'remove':
@@ -76,10 +76,10 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								// fixme: must exclude certain tags that are needed for dicom standards
 								// FIXME: DELETE SHOULD JUST BE DISABLED (greyed out) FOR THE ONES THAT DON'T ALLOW REMOVAL
 								// idea: add a force remove/edit button after warning the user that it may invalidate the dicom
-								const tagRemovalValid = false;
+								const tagRemovalValid = true;
 								if (tagRemovalValid) {
 									// call appropriate editDicom.ts function
-									saveTagRemoval(message.tag, filepath);
+									removeDicomTag(message.tag, filepath);
 									metadataPanel?.webview.postMessage({
 										removed: "removed",
 										tag: message.tag
@@ -282,7 +282,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 
 					document.addEventListener("DOMContentLoaded", function() {
 						/* listen to when editable-cell is in focus. when in focus, create the extra row below it with the buttons
-						 		save edits (blue), discard edits (grey), and remove row (red)
+						 		save edits (blue), cancel edits (grey), and remove row (red)
 						 		(when out of focus, remove this row)
 						*/
 
@@ -292,7 +292,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								// keep track of the cell being edited and its original value
 								currentEditingCell = e.target;
 								ogValue = e.target.textContent;
-								// create the row that allows user to save/discard/remove row
+								// create the row that allows user to save/cancel/remove row
 								createButtonsRow(e.target);
 							}
 						});
@@ -339,7 +339,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							}
 						});
 
-						// listen to button presses (save/discard/remove row)
+						// listen to button presses (save/cancel/remove row)
 						document.addEventListener("click", function(e) {
 							// check if the button was the save button
 							if (e.target.classList.contains("save-edits")) {
@@ -372,8 +372,8 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									vr: VR
 								});
 							}
-							// check for discard button which just cancels the change
-							else if (e.target.classList.contains("discard")) {
+							// check for cancel button which just cancels the change
+							else if (e.target.classList.contains("cancel")) {
 								currentEditingCell.textContent = ogValue;
 								currentEditingCell.blur();
 								currentEditingCell = null;
@@ -417,7 +417,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							
 							buttonCell.innerHTML = 
     							'<button class="action-button save-edits" style="background: #007ACC; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Save</button>' +
-    							'<button class="action-button discard" style="background: #666; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Discard</button>' +
+    							'<button class="action-button cancel" style="background: #666; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Cancel</button>' +
     							'<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>';
 							
 							// fixme: if the tag is a required tag, grey out the delete button adn change pointer status to unclickable
@@ -445,7 +445,8 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							return !validTags.includes(tag);
 						}
 						// fixme: also add checking for when it is edited/saved, type 1 requireds cannot be empty https://dicom.nema.org/medical/dicom/current/output/chtml/part05/sect_7.4.html
-						// note: when making edits to the cell, if it is empty, automatically grey out the "save" button.
+						// note: when making edits to the cell, if it is empty, automatically grey out the "save" button maybe.
+						// note: an empty cell displays as [Empty] in the UI. when focusin, change the contents to just empty if it is [Empty]. if user clears it then saves, display [Empty] but change dicom data to empty
 					});
 					
 				</script>
