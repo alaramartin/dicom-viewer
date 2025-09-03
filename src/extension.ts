@@ -73,9 +73,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								break;
 							case 'remove':
 								console.log(`remove message received with ${message.tag} and ${message.vr}`);
-								// fixme: must exclude certain tags that are needed for dicom standards
-								// FIXME: DELETE SHOULD JUST BE DISABLED (greyed out) FOR THE ONES THAT DON'T ALLOW REMOVAL
-								// idea: add a force remove/edit button after warning the user that it may invalidate the dicom
+								// fixme: check tagremovalvalid here is unnecessary because we check it in the script below
 								const tagRemovalValid = true;
 								if (tagRemovalValid) {
 									// call appropriate editDicom.ts function
@@ -266,6 +264,44 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						outline-offset: -1px;
 						background-color: var(--vscode-input-background);
 					}
+					.tooltip {  
+						position: relative;  
+						display: inline-block;
+					}  
+
+					.tooltip .tooltiptext {  
+						visibility: hidden;  
+						width: 200px;  
+						background-color: #333;  
+						color: #fff;  
+						text-align: center;  
+						border-radius: 6px;  
+						padding: 5px;  
+						/* Position the tooltip */  
+						position: absolute;  
+						z-index: 1000;  
+						bottom: 125%;  
+						left: 50%;  
+						margin-left: -100px;
+						font-size: 12px;
+						box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+					}  
+
+					.tooltip:hover .tooltiptext {  
+						visibility: visible;  
+					}
+					
+					/* Arrow for tooltip */
+					.tooltip .tooltiptext::after {
+						content: "";
+						position: absolute;
+						top: 100%;
+						left: 50%;
+						margin-left: -5px;
+						border-width: 5px;
+						border-style: solid;
+						border-color: #333 transparent transparent transparent;
+					}
 				</style>
 			</head>
 			<body>
@@ -430,7 +466,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							removeButtonsRow();
 							
 							const row = cell.closest('tr');
-							// const hexTag = row.cells[0].textContent.trim();
+							const hexTag = row.cells[0].textContent.trim();
 							const newRow = document.createElement('tr');
 							newRow.className = 'button-row';
 							
@@ -439,16 +475,39 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							buttonCell.style.textAlign = 'center';
 							buttonCell.style.padding = '5px';
 							
-							buttonCell.innerHTML = 
-    							'<button class="action-button save-edits" style="background: #007ACC; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Save</button>' +
-    							'<button class="action-button cancel" style="background: #666; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Cancel</button>' +
-    							'<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>';
+							// check if tag is required for dicom validity
+							const tagRequired = isTagRequired(hexTag);
 							
-							// fixme: if the tag is a required tag, grey out the delete button adn change pointer status to unclickable
+							let removeButtonHTML;
+							if (tagRequired) {
+								// add tooltip (popup that shows up when hovering) for tags that are required
+								removeButtonHTML = 
+									'<div class="tooltip">' +
+										'<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>' +
+										'<span class="tooltiptext">Warning: Deleting this tag will invalidate DICOM</span>' +
+									'</div>';
+							}
+							// if it's pixel data, do NOT REMOVE
+							else if (hexTag === "x7fe00010") {
+								removeButtonHTML = 
+									'<div class="tooltip">' +
+										'<button class="action-button remove-row" style="background: #c1a3a2ff; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; pointer-events: none;">Remove Row</button>' +
+										'<span class="tooltiptext">PixelData cannot be removed.</span>' +
+									'</div>';
+							} else {
+								// regular remove button for non-required tags
+								removeButtonHTML = '<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>';
+							}
+							
+							buttonCell.innerHTML = 
+								'<button class="action-button save-edits" style="background: #007ACC; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Save</button>' +
+								'<button class="action-button cancel" style="background: #666; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Cancel</button>' +
+								removeButtonHTML;
+							
 							newRow.appendChild(buttonCell);
 							row.parentNode.insertBefore(newRow, row.nextSibling);
 							buttonRow = newRow;
-						}
+						}						
 
 						function removeButtonsRow() {
 							if (buttonRow) {
@@ -462,13 +521,38 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						// type 2: cannot be empty
 						// type 3: optional
 						// fixme: also add checking for when it is edited/saved, type 1 requireds cannot be empty https://dicom.nema.org/medical/dicom/current/output/chtml/part05/sect_7.4.html
-						// 	note: when making edits to the cell, if it is empty, automatically grey out the "save" button
-						function getTagRequiredStatus(tag) {
+						// 	note: when making edits to the cell, if it is empty, warning popup when hover over save
+						function isTagRequired(tag) {
 							// remove the "x" in the hex tag string
-							tag = tag.replace("x", "");
-							const validTags = ["00800020"];
-
-							return !validTags.includes(tag);
+							tag = tag.replace(/^x/, "").toUpperCase();
+							
+							// Critical DICOM tags that should not be removed (Type 1 required tags)
+							const requiredTags = [
+								"00080016", // SOPClassUID
+								"00080018", // SOPInstanceUID  
+								"00100010", // PatientName
+								"00100020", // PatientID
+								"00100030", // PatientBirthDate
+								"00100040", // PatientSex
+								"00200010", // StudyID
+								"0020000D", // StudyInstanceUID
+								"0020000E", // SeriesInstanceUID
+								"00200011", // SeriesNumber
+								"00200013", // InstanceNumber
+								"00080020", // StudyDate
+								"00080030", // StudyTime
+								"00080060", // Modality
+								"00280002", // SamplesPerPixel
+								"00280004", // PhotometricInterpretation
+								"00280010", // Rows
+								"00280011", // Columns
+								"00280100", // BitsAllocated
+								"00280101", // BitsStored
+								"00280102", // HighBit
+								"00280103" // PixelRepresentation
+							];
+							
+							return requiredTags.includes(tag);
 						}
 					});
 				</script>
