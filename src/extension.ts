@@ -277,6 +277,8 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					// get vscode api
 					const vscode = acquireVsCodeApi();
 					let currentEditingCell = null;
+					// only non-binary data is editable
+					let editable = true;
 					let ogValue = '';
 					let buttonRow = null;
 
@@ -286,12 +288,21 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						 		(when out of focus, remove this row)
 						*/
 
+						// note: an empty cell displays as [Empty] in the UI. when focusin, change the contents to just empty if it is [Empty]. if user clears it then saves, display [Empty] but change dicom data to empty
+
 						// when editable cell is in focus
 						document.addEventListener("focusin", function(e) {
 							if (e.target.classList.contains("editable-cell")) {
 								// keep track of the cell being edited and its original value
 								currentEditingCell = e.target;
 								ogValue = e.target.textContent;
+								// make an empty cell be empty when editing it
+								if (ogValue === "[Empty]") {
+									e.target.textContent = "";
+								}
+								else if (ogValue === "[Binary Data]") {
+									editable = false;
+								}
 								// create the row that allows user to save/cancel/remove row
 								createButtonsRow(e.target);
 							}
@@ -301,7 +312,12 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						document.addEventListener("focusout", function(e) {
 							setTimeout(() => {
 								if (!document.activeElement || !document.activeElement.classList.contains('action-button')) {
+									if (currentEditingCell.textContent === "") {
+										// display empty cell as "[Empty]"
+										currentEditingCell.textContent = "[Empty]";
+									}
 									currentEditingCell = null;
+									editable = true;
 									removeButtonsRow();
 								}
 							}, 100);
@@ -320,7 +336,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							if (e.key == "Enter" && currentEditingCell) {
 								const newValue = currentEditingCell.textContent;
 								// check if the value changed at all
-								if (newValue !== ogValue) {
+								if (newValue !== ogValue && editable) {
 									// get the dicom tag of the currenteditingcell (first column)
 									const row = currentEditingCell.closest('tr');
                     				const hexTag = row.cells[0].textContent.trim();
@@ -331,6 +347,10 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 										vr: VR,
 										value: newValue
 									});
+								}
+								else if (!editable) {
+									currentEditingCell.textContent = ogValue;
+									console.log("cannot edit binary data");
 								}
 								// remove focus from the cell and remove buttons row
 								currentEditingCell.blur();
@@ -345,7 +365,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							if (e.target.classList.contains("save-edits")) {
 								const newValue = currentEditingCell.textContent;
 								// check if the value changed at all
-								if (newValue !== ogValue) {
+								if (newValue !== ogValue && editable) {
 									// get the dicom tag of the currenteditingcell (first column)
 									const row = currentEditingCell.closest('tr');
                     				const hexTag = row.cells[0].textContent.trim();
@@ -356,6 +376,10 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 										vr: VR,
 										value: newValue
 									});
+								}
+								else if (!editable) {
+									currentEditingCell.textContent = ogValue;
+									console.log("cannot edit binary data");
 								}
 								// remove focus from the cell and remove buttons row
 								removeButtonsRow();
@@ -437,6 +461,8 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						// type 1: cannot be removed or empty
 						// type 2: cannot be empty
 						// type 3: optional
+						// fixme: also add checking for when it is edited/saved, type 1 requireds cannot be empty https://dicom.nema.org/medical/dicom/current/output/chtml/part05/sect_7.4.html
+						// 	note: when making edits to the cell, if it is empty, automatically grey out the "save" button
 						function getTagRequiredStatus(tag) {
 							// remove the "x" in the hex tag string
 							tag = tag.replace("x", "");
@@ -444,11 +470,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 
 							return !validTags.includes(tag);
 						}
-						// fixme: also add checking for when it is edited/saved, type 1 requireds cannot be empty https://dicom.nema.org/medical/dicom/current/output/chtml/part05/sect_7.4.html
-						// note: when making edits to the cell, if it is empty, automatically grey out the "save" button maybe.
-						// note: an empty cell displays as [Empty] in the UI. when focusin, change the contents to just empty if it is [Empty]. if user clears it then saves, display [Empty] but change dicom data to empty
 					});
-					
 				</script>
 			</body>
 			</html>`;
