@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { convertDicomToBase64, getMetadata } from './getImage';
-import {  } from './editDicom';
+import { saveDicomEdit, saveTagRemoval } from './editDicom';
 
 class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.CustomDocument> {
 	public static register(context: vscode.ExtensionContext): vscode.Disposable {
@@ -30,7 +30,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			// get the image in base64 and display in webview
 			const base64Image = convertDicomToBase64(filepath);
 			if (base64Image === "compressed") {
-				imagePanel.webview.html = this.getImageFailedContent();
+				imagePanel.webview.html = this.getCompressedImageFailedContent();
 			}
 			else {
 				imagePanel.webview.html = this.getImageWebviewContent(base64Image);
@@ -58,12 +58,36 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					message => {
 						switch (message.command) {
 							case 'save':
-								// call editDicom.ts function
-								console.log(`save message received with ${message.tag} and ${message.value}`);
+								console.log(`save message received with ${message.tag} and ${message.value} and ${message.vr}`);
+								// it doesn't make sense for binary or sequence data to be editable, so block the user from editing these VRs
+								// fixme: deal with whatever is going on with sequence data because you might just have to unpack it or something
+								// note: sequence data SHOULD be editable... just needs to not be displayed as [Sequence]
+								if (message.vr === 'OB' || message.vr === 'OF' || message.vr === 'OW' || message.vr === 'SQ') {
+									vscode.window.showInformationMessage(`DICOM tag of VR ${message.vr} is not editable.`);
+								}
+								else {
+									// fixme: ALSO, if the VR is a DATE vr, remove the slashes in the string before passing into function, and add the slashes back if appropriate?
+									// call appropriate editDicom.ts function
+									saveDicomEdit(message.tag, message.value, filepath);
+								}
 								break;
 							case 'remove':
-								// call editDicom.ts function
-								console.log(`remove message received with ${message.tag}`);
+								console.log(`remove message received with ${message.tag} and ${message.vr}`);
+								// fixme: must exclude certain tags that are needed for dicom standards
+								// FIXME: DELETE SHOULD JUST BE DISABLED (greyed out) FOR THE ONES THAT DON'T ALLOW REMOVAL
+								// idea: add a force remove/edit button after warning the user that it may invalidate the dicom
+								const tagRemovalValid = false;
+								if (tagRemovalValid) {
+									// call appropriate editDicom.ts function
+									saveTagRemoval(message.tag, filepath);
+									metadataPanel?.webview.postMessage({
+										removed: "removed",
+										tag: message.tag
+									});
+								}
+								else {
+									vscode.window.showInformationMessage(`DICOM tag ${message.tag} cannot be removed.`);
+								}
 								break;
 						}
 					},
@@ -109,7 +133,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		return { uri, dispose: () => {} };
 	}
 
-	getImageFailedContent() {
+	getCompressedImageFailedContent() {
 		return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
@@ -300,9 +324,11 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									// get the dicom tag of the currenteditingcell (first column)
 									const row = currentEditingCell.closest('tr');
                     				const hexTag = row.cells[0].textContent.trim();
+									const VR = row.cells[2].textContent.trim();
 									vscode.postMessage({
 										command: "save",
 										tag: hexTag,
+										vr: VR,
 										value: newValue
 									});
 								}
@@ -323,28 +349,28 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									// get the dicom tag of the currenteditingcell (first column)
 									const row = currentEditingCell.closest('tr');
                     				const hexTag = row.cells[0].textContent.trim();
+									const VR = row.cells[2].textContent.trim();
 									vscode.postMessage({
 										command: "save",
 										tag: hexTag,
+										vr: VR,
 										value: newValue
 									});
 								}
 								// remove focus from the cell and remove buttons row
-								currentEditingCell = null;
 								removeButtonsRow();
 							}
 							// check for "remove row" button
 							else if (e.target.classList.contains("remove-row")) {
 								// get the dicom tag of the currenteditingcell (first column)
-									const row = currentEditingCell.closest('tr');
-                    				const hexTag = row.cells[0].textContent.trim();
-									vscode.postMessage({
-										command: "remove",
-										tag: hexTag
-									});
-									// remove focus from the cell and remove buttons row
-									currentEditingCell = null;
-									removeButtonsRow();
+								const row = currentEditingCell.closest('tr');
+								const hexTag = row.cells[0].textContent.trim();
+								const VR = row.cells[2].textContent.trim();
+								vscode.postMessage({
+									command: "remove",
+									tag: hexTag,
+									vr: VR
+								});
 							}
 							// check for discard button which just cancels the change
 							else if (e.target.classList.contains("discard")) {
@@ -355,12 +381,32 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							}
 						});
 
+						// add a listener to remove the currenteditingrow if dicom editing was successful
+						window.addEventListener("message", function(e) {
+							const message = e.data;
+							if (message.removed === "removed") {
+								const rows = document.querySelectorAll('tbody tr');
+								rows.forEach(row => {
+									const tagCell = row.cells[0];
+									if (tagCell && tagCell.textContent.trim() === message.tag) {
+										row.remove();
+										console.log("row removed for tag:", message.tag);
+									}
+								});
+								// remove the buttons row
+								currentEditingCell = null;
+								removeButtonsRow();
+							}
+						});
+
 						// add a row below the editing row that displays 3 button options
 						function createButtonsRow(cell) {
+							console.log("create");
 							// remove button row if already existing
 							removeButtonsRow();
 							
 							const row = cell.closest('tr');
+							// const hexTag = row.cells[0].textContent.trim();
 							const newRow = document.createElement('tr');
 							newRow.className = 'button-row';
 							
@@ -374,6 +420,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
     							'<button class="action-button discard" style="background: #666; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Discard</button>' +
     							'<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>';
 							
+							// fixme: if the tag is a required tag, grey out the delete button adn change pointer status to unclickable
 							newRow.appendChild(buttonCell);
 							row.parentNode.insertBefore(newRow, row.nextSibling);
 							buttonRow = newRow;
@@ -385,7 +432,22 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								buttonRow = null;
 							}
 						}
+
+						// required tags list from https://www.pclviewer.com/help/required_dicom_tags.htm
+						// type 1: cannot be removed or empty
+						// type 2: cannot be empty
+						// type 3: optional
+						function getTagRequiredStatus(tag) {
+							// remove the "x" in the hex tag string
+							tag = tag.replace("x", "");
+							const validTags = ["00800020"];
+
+							return !validTags.includes(tag);
+						}
+						// fixme: also add checking for when it is edited/saved, type 1 requireds cannot be empty https://dicom.nema.org/medical/dicom/current/output/chtml/part05/sect_7.4.html
+						// note: when making edits to the cell, if it is empty, automatically grey out the "save" button.
 					});
+					
 				</script>
 			</body>
 			</html>`;
