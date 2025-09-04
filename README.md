@@ -16,7 +16,7 @@ Viewing:
 Editing:
 ![example2](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/example-dicom-edit.png)
 
-Note: this extension currently does not support displaying compressed images or the official name/VR of private tags. Binary data cannot be edited.
+Note: this extension currently does not support displaying compressed images or the official name/VR of private tags. Binary data and tags required for image display cannot be edited.
 
 ## Installation
 

@@ -50,18 +50,19 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				);
 
 				const metadata = getMetadata(filepath);
-				const editScriptUri = vscode.Uri.file("editDicom.ts");
-				metadataPanel.webview.html = this.getMetadataWebviewContent(metadata, editScriptUri);
+				metadataPanel.webview.html = this.getMetadataWebviewContent(metadata);
 
 				// handle messages from the webview - call functions from editDicom for appropriate commands
 				metadataPanel.webview.onDidReceiveMessage(
 					message => {
+						// fixme: instead of immediately updating, collect a list of tags to change/remove until user clicks "save dicom" button, then loop through the edits and removals
+						// 		idea: have dict like {action(remove/save) : tag : vr : newValue}
 						switch (message.command) {
 							case 'save':
 								console.log(`save message received with ${message.tag} and ${message.value} and ${message.vr}`);
 								// it doesn't make sense for binary or sequence data to be editable, so block the user from editing these VRs
 								// fixme: deal with whatever is going on with sequence data because you might just have to unpack it or something
-								// note: sequence data SHOULD be editable... just needs to not be displayed as [Sequence]
+								// 		note: sequence data SHOULD be editable... just needs to not be displayed as [Sequence]
 								if (message.vr === 'OB' || message.vr === 'OF' || message.vr === 'OW' || message.vr === 'SQ') {
 									vscode.window.showInformationMessage(`DICOM tag of VR ${message.vr} is not editable.`);
 								}
@@ -73,19 +74,12 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								break;
 							case 'remove':
 								console.log(`remove message received with ${message.tag} and ${message.vr}`);
-								// fixme: check tagremovalvalid here is unnecessary because we check it in the script below
-								const tagRemovalValid = true;
-								if (tagRemovalValid) {
-									// call appropriate editDicom.ts function
-									removeDicomTag(message.tag, filepath);
-									metadataPanel?.webview.postMessage({
-										removed: "removed",
-										tag: message.tag
-									});
-								}
-								else {
-									vscode.window.showInformationMessage(`DICOM tag ${message.tag} cannot be removed.`);
-								}
+								// call appropriate editDicom.ts function
+								removeDicomTag(message.tag, filepath);
+								metadataPanel?.webview.postMessage({
+									removed: "removed",
+									tag: message.tag
+								});
 								break;
 						}
 					},
@@ -174,7 +168,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		}
 	}
 
-	getMetadataWebviewContent(metadata: Array<any>, scriptUri:vscode.Uri) {
+	getMetadataWebviewContent(metadata: Array<any>) {
 		if (metadata.length === 1) {
 			return `<!DOCTYPE html>
 			<html lang="en">
@@ -340,7 +334,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									editable = false;
 								}
 								// create the row that allows user to save/cancel/remove row
-								createButtonsRow(e.target);
+								editable = createButtonsRow(e.target) && editable;
 							}
 						});
 
@@ -348,7 +342,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						document.addEventListener("focusout", function(e) {
 							setTimeout(() => {
 								if (!document.activeElement || !document.activeElement.classList.contains('action-button')) {
-									if (currentEditingCell.textContent === "") {
+									if (currentEditingCell?.textContent === "") {
 										// display empty cell as "[Empty]"
 										currentEditingCell.textContent = "[Empty]";
 									}
@@ -417,20 +411,27 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									currentEditingCell.textContent = ogValue;
 									console.log("cannot edit binary data");
 								}
-								// remove focus from the cell and remove buttons row
-								removeButtonsRow();
 							}
 							// check for "remove row" button
 							else if (e.target.classList.contains("remove-row")) {
 								// get the dicom tag of the currenteditingcell (first column)
-								const row = currentEditingCell.closest('tr');
-								const hexTag = row.cells[0].textContent.trim();
-								const VR = row.cells[2].textContent.trim();
-								vscode.postMessage({
-									command: "remove",
-									tag: hexTag,
-									vr: VR
-								});
+								if (editable) {
+									const row = currentEditingCell.closest('tr');
+									const hexTag = row.cells[0].textContent.trim();
+									const VR = row.cells[2].textContent.trim();
+									vscode.postMessage({
+										command: "remove",
+										tag: hexTag,
+										vr: VR
+									});
+								}
+								else {
+									currentEditingCell.textContent = ogValue;
+									// fixme: add anything that is binary data to the required tags list
+									console.log("cannot remove binary data");
+									// remove focus from the cell and remove buttons row
+									removeButtonsRow();
+								}
 							}
 							// check for cancel button which just cancels the change
 							else if (e.target.classList.contains("cancel")) {
@@ -479,34 +480,45 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							const tagRequired = isTagRequired(hexTag);
 							
 							let removeButtonHTML;
-							if (tagRequired) {
-								// add tooltip (popup that shows up when hovering) for tags that are required
+							let saveButtonHTML;
+							let editable = true;
+							if (tagRequired === "require") {
+								saveButtonHTML = '<button class="action-button save-edits" style="background: #007ACC; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Save</button>';
+								// add tooltip (popup that shows up when hovering) for removal of tags that are required
 								removeButtonHTML = 
 									'<div class="tooltip">' +
 										'<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>' +
-										'<span class="tooltiptext">Warning: Deleting this tag will invalidate DICOM</span>' +
+										'<span class="tooltiptext">Warning: Deleting this tag will invalidate the DICOM</span>' +
 									'</div>';
 							}
-							// if it's pixel data, do NOT REMOVE
-							else if (hexTag === "x7fe00010") {
+							// block removal of anything used in getimage()
+							else if (tagRequired === "image") {
+								saveButtonHTML =
+									'<div class="tooltip">' +
+										'<button class="action-button save-edits" style="background: #a2aec1ff; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; pointer-events: none;">Save</button>' +
+										'<span class="tooltiptext">Image data cannot be edited.</span>' +
+									'</div>';
 								removeButtonHTML = 
 									'<div class="tooltip">' +
 										'<button class="action-button remove-row" style="background: #c1a3a2ff; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; pointer-events: none;">Remove Row</button>' +
-										'<span class="tooltiptext">PixelData cannot be removed.</span>' +
+										'<span class="tooltiptext">Image data cannot be removed.</span>' +
 									'</div>';
+								editable = false;
 							} else {
-								// regular remove button for non-required tags
+								// regular remove and save button for non-required tags
+								saveButtonHTML = '<button class="action-button save-edits" style="background: #007ACC; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Save</button>';
 								removeButtonHTML = '<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>';
 							}
 							
 							buttonCell.innerHTML = 
-								'<button class="action-button save-edits" style="background: #007ACC; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Save</button>' +
+								saveButtonHTML +
 								'<button class="action-button cancel" style="background: #666; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Cancel</button>' +
 								removeButtonHTML;
 							
 							newRow.appendChild(buttonCell);
 							row.parentNode.insertBefore(newRow, row.nextSibling);
 							buttonRow = newRow;
+							return editable;
 						}						
 
 						function removeButtonsRow() {
@@ -525,6 +537,18 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						function isTagRequired(tag) {
 							// remove the "x" in the hex tag string
 							tag = tag.replace(/^x/, "").toUpperCase();
+
+							// tags required for getImage() to work (CANNOT delete or // fixme: modify)
+							const imageRequiredTags = [
+								"00280010", // rows
+								"00280011", // cols
+								"00280100", // bitsallocated
+								"00280101", // bitsstored
+								"00280103", // pixelrepresentation
+								"00280002", // samplesperrepresentation
+								"00280004", // photometricinterpretation
+								"7FE00010", // pixeldata
+							]
 							
 							// Critical DICOM tags that should not be removed (Type 1 required tags)
 							const requiredTags = [
@@ -542,17 +566,21 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								"00080020", // StudyDate
 								"00080030", // StudyTime
 								"00080060", // Modality
-								"00280002", // SamplesPerPixel
-								"00280004", // PhotometricInterpretation
-								"00280010", // Rows
-								"00280011", // Columns
-								"00280100", // BitsAllocated
-								"00280101", // BitsStored
-								"00280102", // HighBit
-								"00280103" // PixelRepresentation
+								"00280102" // HighBit
 							];
 							
-							return requiredTags.includes(tag);
+							if (imageRequiredTags.includes(tag)) {
+								console.log("image");
+								return "image";
+							}
+							else if (requiredTags.includes(tag)) {
+								console.log("required");
+								return "require";
+							}
+							else {
+								console.log("ok");
+								return "ok";
+							}
 						}
 					});
 				</script>
