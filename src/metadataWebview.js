@@ -13,7 +13,7 @@ let buttonRow = null;
 let pendingEdits = {};
 let pendingRemovals = new Set();
 let hasChanges = false;
-// todo: let stillValid = true;
+let isInvalid = false;
 
 // once something has been edited, buttons pop up to save or discard changes to the dicom
 function showDicomActions(show) {
@@ -22,10 +22,56 @@ function showDicomActions(show) {
 }
 
 // keep track of any changes made to the dicom
-function markChanged(/*fixme: add check for whether or not it potentially invalidates dicom*/) {
+function markChanged(invalidated) {
     hasChanges = true;
-    // todo: stillValid = stillValid && !invalidated;
+    if (invalidated) {
+        addInvalidatedWarnings();
+        isInvalid = true;
+    }
+    // todo: add check for if it reverted
     showDicomActions(true);
+}
+
+// when dicom is at risk of being invalidated, add a tooltip warning to the official save buttons
+function addInvalidatedWarnings() {
+    const actions = document.getElementById('dicom-actions');
+    const saveBtn = actions.querySelector('.save');
+    const replaceBtn = actions.querySelector('.replace');
+    
+    if (!saveBtn.classList.contains('has-tooltip')) {
+        saveBtn.classList.add('has-tooltip');
+        const saveTooltip = document.createElement('span');
+        saveTooltip.className = 'warning-tooltip';
+        saveTooltip.textContent = 'Warning: Changes may invalidate DICOM compliance';
+        saveBtn.appendChild(saveTooltip);
+    }
+    if (!replaceBtn.classList.contains('has-tooltip')) {
+        replaceBtn.classList.add('has-tooltip');
+        const replaceTooltip = document.createElement('span');
+        replaceTooltip.className = 'warning-tooltip';
+        replaceTooltip.textContent = 'Warning: Changes may invalidate DICOM compliance';
+        replaceBtn.appendChild(replaceTooltip);
+    }
+}
+
+function removeInvalidatedWarnings() {
+    const actions = document.getElementById('dicom-actions');
+    const buttonsWithTooltips = actions.querySelectorAll('.has-tooltip');
+    
+    buttonsWithTooltips.forEach(button => {
+        button.classList.remove('has-tooltip');
+        const tooltip = button.querySelector('.warning-tooltip');
+        if (tooltip) {
+            tooltip.remove();
+        }
+    });
+}
+
+function removeButtonsRow() {
+    if (buttonRow) {
+        buttonRow.remove();
+        buttonRow = null;
+    }
 }
 
 function getHexTag(cell) {
@@ -34,11 +80,12 @@ function getHexTag(cell) {
 }
 
 function getVR(cell) {
-    const row = currentEditingCell.closest('tr');
+    const row = cell.closest('tr');
     return row.cells[2].textContent.trim();
 }
 
 // fixme: make the dicomactoins row look nicer/be nicer location
+// idea: move it to the bottom and have a small background popup with it, making the things behind it unclickable
 document.addEventListener("DOMContentLoaded", function() {
     /* listen to when editable-cell is in focus. when in focus, create the extra row below it with the buttons
             save edits (blue), cancel edits (grey), and remove row (red)
@@ -71,6 +118,7 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 
+    // fixme: when you switch directly from one cell to another, doesn't fire properly
     // when cell goes out of focus, remove the editing buttons row
     document.addEventListener("focusout", function(e) {
         setTimeout(() => {
@@ -122,7 +170,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 const VR = getVR(currentEditingCell);
                 // store edit, don't send to extension yet
                 pendingEdits[hexTag] = { vr: VR, value: newValue };
-                markChanged();
+                // if the tag was required but still edited, mark as potentially invalidated
+                markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 edited = true;
             }
             else if (!editable) {
@@ -142,7 +191,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 const hexTag = getHexTag(currentEditingCell);
                 const VR = getVR(currentEditingCell);
                 pendingEdits[hexTag] = { vr: VR, value: newValue };
-                markChanged();
+                // if the tag was required but still edited, mark as potentially invalidated
+                markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 edited = true;
             }
             // fixme: distinguish between editable and removable (ex. binary data cannot be edited)
@@ -162,7 +212,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 const row = currentEditingCell.closest('tr');
                 const hexTag = getHexTag(currentEditingCell);
                 pendingRemovals.add(hexTag);
-                markChanged();
+                // if the tag was required but still removed, mark as potentially invalidated
+                markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 row.remove();
             }
             else {
@@ -207,24 +258,6 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 
-    // add a listener to remove the currenteditingrow if dicom editing was successful
-    window.addEventListener("message", function(e) {
-        const message = e.data;
-        if (message.removed === "removed") {
-            const rows = document.querySelectorAll('tbody tr');
-            rows.forEach(row => {
-                const tagCell = row.cells[0];
-                if (tagCell && tagCell.textContent.trim() === message.tag) {
-                    row.remove();
-                    console.log("row removed for tag:", message.tag);
-                }
-            });
-            // remove the buttons row
-            currentEditingCell = null;
-            removeButtonsRow();
-        }
-    });
-
     // add a row below the editing row that displays 3 button options
     function createButtonsRow(cell) {
         console.log("create");
@@ -242,7 +275,7 @@ document.addEventListener("DOMContentLoaded", function() {
         buttonCell.style.padding = '5px';
 
         // check if tag is required for dicom validity
-        const tagRequired = isTagRequired(hexTag);
+        const tagRequired = isTagRequired(hexTag, cell);
 
         let removeButtonHTML;
         let saveButtonHTML;
@@ -273,7 +306,16 @@ document.addEventListener("DOMContentLoaded", function() {
                     '<span class="tooltiptext">Image data cannot be removed.</span>' +
                 '</div>';
             editable = false;
-        } else if (tagRequired === "ok") {
+        }
+        else if (tagRequired === "binary") {
+            saveButtonHTML =
+                '<div class="tooltip">' +
+                    '<button class="action-button save-edits" style="background: #a2aec1ff; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; pointer-events: none;">Save</button>' +
+                    '<span class="tooltiptext">Binary data cannot be edited.</span>' +
+                '</div>';
+            removeButtonHTML = '<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>';
+        }
+        else if (tagRequired === "ok") {
             // regular remove and save button for non-required tags
             saveButtonHTML = '<button class="action-button save-edits" style="background: #007ACC; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Save</button>';
             removeButtonHTML = '<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>';
@@ -288,25 +330,18 @@ document.addEventListener("DOMContentLoaded", function() {
         row.parentNode.insertBefore(newRow, row.nextSibling);
         buttonRow = newRow;
         return editable;
-    }						
-
-    function removeButtonsRow() {
-        if (buttonRow) {
-            buttonRow.remove();
-            buttonRow = null;
-        }
     }
+
 
     // required tags list from https://www.pclviewer.com/help/required_dicom_tags.htm
     // type 1: cannot be removed or empty
     // type 2: cannot be empty
     // type 3: optional
     // 	note: when making edits to the cell, if it is empty, warning popup when hover over save
-    function isTagRequired(tag) {
+    function isTagRequired(tag, cell) {
         tag = tag.replace(/^x/, "").toUpperCase();
 
         // tags required for getImage() to work (CANNOT delete or modify)
-        // todo: add binary things and other stuff that just shouldn't be modified here
         const imageRequiredTags = [
             "00280010", // rows
             "00280011", // cols
@@ -318,7 +353,7 @@ document.addEventListener("DOMContentLoaded", function() {
             "7FE00010", // pixeldata
         ];
         
-        // Critical DICOM tags that should not be removed (Type 1 required tags)
+        // tags that should be warned before removal because will probably invalidate
         // todo: check if these are correct and fully inclusive
         const requiredTags = [
             "00080016", // SOPClassUID
@@ -338,11 +373,16 @@ document.addEventListener("DOMContentLoaded", function() {
             "00280102" // HighBit
         ];
 
+        const vr = getVR(cell);
+
         if (imageRequiredTags.includes(tag)) {
             return "image";
         }
         else if (requiredTags.includes(tag)) {
             return "require";
+        }
+        else if (vr === 'OB' || vr === 'OW' || vr === 'OF' || vr === 'OD') {
+            return "binary";
         }
         else {
             return "ok";
@@ -353,6 +393,7 @@ document.addEventListener("DOMContentLoaded", function() {
         pendingEdits = {};
         pendingRemovals = new Set();
         hasChanges = false;
+        removeInvalidatedWarnings();
         showDicomActions(false);
         console.log("reset changes");
     }

@@ -142,7 +142,7 @@ export function getMetadata(filepath: string): Array<any> {
                 if (finalVr === 'SQ') {
                     value = '[Sequence]';
                     // fixme: make SQ a dropdown/collapsible sequence element with each element within
-                } else if (finalVr === 'OB' || finalVr === 'OW' || finalVr === 'OF') {
+                } else if (finalVr === 'OB' || finalVr === 'OW' || finalVr === 'OF' || finalVr === 'OD') {
                     value = '[Binary Data]';
                 } else if (finalVr === 'DA') {
                     // if the VR is a date, make it more readable format (YYYY/MM/DD)

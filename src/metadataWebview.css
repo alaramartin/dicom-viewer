@@ -100,3 +100,74 @@ td {
 .dicom-action-btn.replace {
     background: #666;
 }
+/* Add to metadataWebview.css */
+#dicom-actions .tooltip {
+    position: relative;
+    display: inline-block;
+}
+#dicom-actions .tooltip .tooltiptext {
+    visibility: hidden;
+    width: 220px;
+    background-color: #333;
+    color: #fff;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px;
+    position: absolute;
+    z-index: 1000;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -110px;
+    font-size: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+#dicom-actions .tooltip:hover .tooltiptext {
+    visibility: visible;
+}
+#dicom-actions .tooltip .tooltiptext::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #333 transparent transparent transparent;
+}
+/* Add to metadataWebview.css */
+.dicom-action-btn.has-tooltip {
+    position: relative;
+}
+
+.warning-tooltip {
+    visibility: hidden;
+    width: 220px;
+    background-color: #d73a49;
+    color: white;
+    text-align: center;
+    border-radius: 6px;
+    padding: 8px;
+    position: absolute;
+    z-index: 1000;
+    bottom: 125%;
+    left: 50%;
+    margin-left: -110px;
+    font-size: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    white-space: nowrap;
+}
+
+.dicom-action-btn.has-tooltip:hover .warning-tooltip {
+    visibility: visible;
+}
+
+.warning-tooltip::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #d73a49 transparent transparent transparent;
+}
