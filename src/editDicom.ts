@@ -14,7 +14,6 @@ export function saveDicomEdit(tag: string, vr: string, newValue: string, filepat
     
     // re-encode and save to a new file
     //      todo: (for now--later can change to rewriting the original)
-    //      idea: whenever something is edited, a new "save DICOM" button pops up in the bottom corner. then, gives option to save as new dicom or overwrite original
     //      ^ popup warning when hovering if there's a chance of invalid dicom
     const newBuffer = Buffer.from(dicomDict.write());
     const outputPath = filepath.replace(/\.dcm$/i, "_edited.dcm");
