@@ -37,6 +37,8 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			}
 			
         	let metadataPanel: vscode.WebviewPanel | undefined;
+			const metadata = getMetadata(filepath);
+			const originalMetadataHTML = this.getMetadataWebviewContent(metadata);
 
 			// create the side-by-side view of metadata
 			const createMetadataPanel = () => {
@@ -49,14 +51,16 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					{ enableScripts: true }
 				);
 
-				const metadata = getMetadata(filepath);
-				metadataPanel.webview.html = this.getMetadataWebviewContent(metadata);
+				metadataPanel.webview.html = originalMetadataHTML;
+
+				let toRemove = {};
+				let toEdit = {};
 
 				// handle messages from the webview - call functions from editDicom for appropriate commands
 				metadataPanel.webview.onDidReceiveMessage(
 					message => {
 						// fixme: instead of immediately updating, collect a list of tags to change/remove until user clicks "save dicom" button, then loop through the edits and removals
-						// 		idea: have dict like {action(remove/save) : tag : vr : newValue}
+						// 		idea: have dict like {tag : [vr, newValue]}
 						switch (message.command) {
 							case 'save':
 								console.log(`save message received with ${message.tag} and ${message.value} and ${message.vr}`);
@@ -80,6 +84,14 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									removed: "removed",
 									tag: message.tag
 								});
+								break;
+							case 'reload':
+								// reload the metadata panel with original content
+								if (metadataPanel) {
+									metadataPanel.dispose();
+        							createMetadataPanel();
+									console.log("reset DOM");
+								}
 								break;
 						}
 					},
@@ -271,7 +283,6 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						text-align: center;  
 						border-radius: 6px;  
 						padding: 5px;  
-						/* Position the tooltip */  
 						position: absolute;  
 						z-index: 1000;  
 						bottom: 125%;  
@@ -285,7 +296,6 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						visibility: visible;  
 					}
 					
-					/* Arrow for tooltip */
 					.tooltip .tooltiptext::after {
 						content: "";
 						position: absolute;
@@ -296,9 +306,39 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						border-style: solid;
 						border-color: #333 transparent transparent transparent;
 					}
+					#dicom-actions {
+						position: fixed;
+						top: 20px;
+						right: 30px;
+						z-index: 2000;
+						display: none;
+						gap: 8px;
+					}
+					.dicom-action-btn {
+						background: #007ACC;
+						color: white;
+						border: none;
+						padding: 6px 14px;
+						margin: 0 2px;
+						border-radius: 3px;
+						cursor: pointer;
+						font-size: 13px;
+						box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+					}
+					.dicom-action-btn.discard {
+						background: #E74C3C;
+					}
+					.dicom-action-btn.replace {
+						background: #666;
+					}
 				</style>
 			</head>
 			<body>
+				<div id="dicom-actions">
+					<button class="dicom-action-btn save" title="Save as new DICOM">Save New DICOM</button>
+					<button class="dicom-action-btn replace" title="Replace original DICOM">Replace DICOM</button>
+					<button class="dicom-action-btn discard" title="Discard all changes">Discard Changes</button>
+				</div>
 				<table>
 					${tableRows}
 				</table>
@@ -312,6 +352,23 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					let ogValue = '';
 					let buttonRow = null;
 
+					// track pending edits/removals
+					let pendingEdits = {};
+					let pendingRemovals = new Set();
+					let hasChanges = false;
+					// save the original form of the document in case the user discards changes
+					const originalDoc = document.documentElement.outerHTML;
+
+					function showDicomActions(show) {
+						const actions = document.getElementById('dicom-actions');
+						actions.style.display = show ? 'flex' : 'none';
+					}
+
+					function markChanged() {
+						hasChanges = true;
+						showDicomActions(true);
+					}
+					// fixme: make the dicomactoins row look nicer/be nicer location
 					document.addEventListener("DOMContentLoaded", function() {
 						/* listen to when editable-cell is in focus. when in focus, create the extra row below it with the buttons
 						 		save edits (blue), cancel edits (grey), and remove row (red)
@@ -319,7 +376,6 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						*/
 
 						// note: an empty cell displays as [Empty] in the UI. when focusin, change the contents to just empty if it is [Empty]. if user clears it then saves, display [Empty] but change dicom data to empty
-
 						// when editable cell is in focus
 						document.addEventListener("focusin", function(e) {
 							if (e.target.classList.contains("editable-cell")) {
@@ -369,14 +425,11 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								if (newValue !== ogValue && editable) {
 									// get the dicom tag of the currenteditingcell (first column)
 									const row = currentEditingCell.closest('tr');
-                    				const hexTag = row.cells[0].textContent.trim();
+									const hexTag = row.cells[0].textContent.trim();
 									const VR = row.cells[2].textContent.trim();
-									vscode.postMessage({
-										command: "save",
-										tag: hexTag,
-										vr: VR,
-										value: newValue
-									});
+									// store edit, don't send to extension yet
+									pendingEdits[hexTag] = { vr: VR, value: newValue };
+									markChanged();
 								}
 								else if (!editable) {
 									currentEditingCell.textContent = ogValue;
@@ -389,49 +442,46 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							}
 						});
 
-						// listen to button presses (save/cancel/remove row)
+						// listen to button presses (save/cancel/remove row, save dicoms)
 						document.addEventListener("click", function(e) {
-							// check if the button was the save button
 							if (e.target.classList.contains("save-edits")) {
 								const newValue = currentEditingCell.textContent;
-								// check if the value changed at all
 								if (newValue !== ogValue && editable) {
-									// get the dicom tag of the currenteditingcell (first column)
-									const row = currentEditingCell.closest('tr');
-                    				const hexTag = row.cells[0].textContent.trim();
-									const VR = row.cells[2].textContent.trim();
-									vscode.postMessage({
-										command: "save",
-										tag: hexTag,
-										vr: VR,
-										value: newValue
-									});
-								}
-								else if (!editable) {
-									currentEditingCell.textContent = ogValue;
-									console.log("cannot edit binary data");
-								}
-							}
-							// check for "remove row" button
-							else if (e.target.classList.contains("remove-row")) {
-								// get the dicom tag of the currenteditingcell (first column)
-								if (editable) {
 									const row = currentEditingCell.closest('tr');
 									const hexTag = row.cells[0].textContent.trim();
 									const VR = row.cells[2].textContent.trim();
-									vscode.postMessage({
-										command: "remove",
-										tag: hexTag,
-										vr: VR
-									});
+									pendingEdits[hexTag] = { vr: VR, value: newValue };
+									markChanged();
 								}
-								else {
+								// fixme: distinguish between editable and removable
+								else if (!editable) {
 									currentEditingCell.textContent = ogValue;
-									// fixme: add anything that is binary data to the required tags list
-									console.log("cannot remove binary data");
+									console.log("cannot edit");
 									// remove focus from the cell and remove buttons row
 									removeButtonsRow();
 								}
+								// remove focus from the cell and remove buttons row
+								currentEditingCell.blur();
+								currentEditingCell = null;
+								removeButtonsRow();
+							}
+							// check for "remove row" button
+							else if (e.target.classList.contains("remove-row")) {
+								if (editable) {
+									const row = currentEditingCell.closest('tr');
+									const hexTag = row.cells[0].textContent.trim();
+									pendingRemovals.add(hexTag);
+									markChanged();
+									row.remove();
+								}
+								else {
+									currentEditingCell.textContent = ogValue;
+									console.log("cannot remove");
+								}
+								// remove focus from the cell and remove buttons row
+								currentEditingCell.blur();
+								currentEditingCell = null;
+								removeButtonsRow();
 							}
 							// check for cancel button which just cancels the change
 							else if (e.target.classList.contains("cancel")) {
@@ -439,6 +489,34 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								currentEditingCell.blur();
 								currentEditingCell = null;
 								removeButtonsRow();
+							}
+							// DICOM action buttons (save/replace/cancel)
+							else if (e.target.classList.contains("dicom-action-btn")) {
+								if (e.target.classList.contains("save")) {
+									vscode.postMessage({
+										command: "saveAll",
+										mode: "new",
+										edits: pendingEdits,
+										removals: Array.from(pendingRemovals)
+									});
+									resetChanges();
+								}
+								else if (e.target.classList.contains("replace")) {
+									vscode.postMessage({
+										command: "saveAll",
+										mode: "replace",
+										edits: pendingEdits,
+										removals: Array.from(pendingRemovals)
+									});
+									resetChanges();
+								}
+								else if (e.target.classList.contains("discard")) {
+									// tell the extension to reload the metadata panel with original content
+									vscode.postMessage({
+										command: "reload"
+									});
+									resetChanges();
+								}
 							}
 						});
 
@@ -465,20 +543,20 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							console.log("create");
 							// remove button row if already existing
 							removeButtonsRow();
-							
+
 							const row = cell.closest('tr');
 							const hexTag = row.cells[0].textContent.trim();
 							const newRow = document.createElement('tr');
 							newRow.className = 'button-row';
-							
+
 							const buttonCell = document.createElement('td');
 							buttonCell.colSpan = 4;
 							buttonCell.style.textAlign = 'center';
 							buttonCell.style.padding = '5px';
-							
+
 							// check if tag is required for dicom validity
 							const tagRequired = isTagRequired(hexTag);
-							
+
 							let removeButtonHTML;
 							let saveButtonHTML;
 							let editable = true;
@@ -509,12 +587,12 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								saveButtonHTML = '<button class="action-button save-edits" style="background: #007ACC; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Save</button>';
 								removeButtonHTML = '<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>';
 							}
-							
+
 							buttonCell.innerHTML = 
 								saveButtonHTML +
 								'<button class="action-button cancel" style="background: #666; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Cancel</button>' +
 								removeButtonHTML;
-							
+
 							newRow.appendChild(buttonCell);
 							row.parentNode.insertBefore(newRow, row.nextSibling);
 							buttonRow = newRow;
@@ -535,52 +613,33 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						// fixme: also add checking for when it is edited/saved, type 1 requireds cannot be empty https://dicom.nema.org/medical/dicom/current/output/chtml/part05/sect_7.4.html
 						// 	note: when making edits to the cell, if it is empty, warning popup when hover over save
 						function isTagRequired(tag) {
-							// remove the "x" in the hex tag string
 							tag = tag.replace(/^x/, "").toUpperCase();
 
 							// tags required for getImage() to work (CANNOT delete or // fixme: modify)
 							const imageRequiredTags = [
-								"00280010", // rows
-								"00280011", // cols
-								"00280100", // bitsallocated
-								"00280101", // bitsstored
-								"00280103", // pixelrepresentation
-								"00280002", // samplesperrepresentation
-								"00280004", // photometricinterpretation
-								"7FE00010", // pixeldata
-							]
-							
-							// Critical DICOM tags that should not be removed (Type 1 required tags)
-							const requiredTags = [
-								"00080016", // SOPClassUID
-								"00080018", // SOPInstanceUID  
-								"00100010", // PatientName
-								"00100020", // PatientID
-								"00100030", // PatientBirthDate
-								"00100040", // PatientSex
-								"00200010", // StudyID
-								"0020000D", // StudyInstanceUID
-								"0020000E", // SeriesInstanceUID
-								"00200011", // SeriesNumber
-								"00200013", // InstanceNumber
-								"00080020", // StudyDate
-								"00080030", // StudyTime
-								"00080060", // Modality
-								"00280102" // HighBit
+								"00280010", "00280011", "00280100", "00280101", "00280103", "00280002", "00280004", "7FE00010",
 							];
-							
+							const requiredTags = [
+								"00080016", "00080018", "00100010", "00100020", "00100030", "00100040", "00200010",
+								"0020000D", "0020000E", "00200011", "00200013", "00080020", "00080030", "00080060", "00280102"
+							];
 							if (imageRequiredTags.includes(tag)) {
-								console.log("image");
 								return "image";
 							}
 							else if (requiredTags.includes(tag)) {
-								console.log("required");
 								return "require";
 							}
 							else {
-								console.log("ok");
 								return "ok";
 							}
+						}
+
+						function resetChanges() {
+							pendingEdits = {};
+							pendingRemovals = new Set();
+							hasChanges = false;
+							showDicomActions(false);
+							console.log("reset changes");
 						}
 					});
 				</script>
