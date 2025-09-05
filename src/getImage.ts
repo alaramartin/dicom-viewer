@@ -141,7 +141,7 @@ export function getMetadata(filepath: string): Array<any> {
                 // handle different vr types
                 if (finalVr === 'SQ') {
                     value = '[Sequence]';
-                    // todo: make it a dropdown/collapsible sequence element with each element within
+                    // fixme: make SQ a dropdown/collapsible sequence element with each element within
                 } else if (finalVr === 'OB' || finalVr === 'OW' || finalVr === 'OF') {
                     value = '[Binary Data]';
                 } else if (finalVr === 'DA') {

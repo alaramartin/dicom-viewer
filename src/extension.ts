@@ -54,39 +54,16 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 
 				metadataPanel.webview.html = originalMetadataHTML;
 
-				let toRemove = {};
-				let toEdit = {};
-
 				// handle messages from the webview - call functions from editDicom for appropriate commands
 				metadataPanel.webview.onDidReceiveMessage(
 					message => {
-						// fixme: instead of immediately updating, collect a list of tags to change/remove until user clicks "save dicom" button, then loop through the edits and removals
-						// 		idea: have dict like {tag : [vr, newValue]}
+						// update the dicom according to accumulated saves and removals 
 						switch (message.command) {
-							case 'save':
-								console.log(`save message received with ${message.tag} and ${message.value} and ${message.vr}`);
-								// it doesn't make sense for binary or sequence data to be editable, so block the user from editing these VRs
-								// fixme: deal with whatever is going on with sequence data because you might just have to unpack it or something
-								// 		note: sequence data SHOULD be editable... just needs to not be displayed as [Sequence]
-								if (message.vr === 'OB' || message.vr === 'OF' || message.vr === 'OW' || message.vr === 'SQ') {
-									vscode.window.showInformationMessage(`DICOM tag of VR ${message.vr} is not editable.`);
-								}
-								else {
-									// fixme: ALSO, if the VR is a DATE vr, remove the slashes in the string before passing into function, and add the slashes back if appropriate?
-									// call appropriate editDicom.ts function
-									saveDicomEdit(message.tag, message.vr, message.value, filepath);
-								}
-								break;
-							case 'remove':
-								console.log(`remove message received with ${message.tag} and ${message.vr}`);
-								// call appropriate editDicom.ts function
-								removeDicomTag(message.tag, filepath);
-								metadataPanel?.webview.postMessage({
-									removed: "removed",
-									tag: message.tag
-								});
-								break;
-							case 'reload':
+							case "saveAll":
+								console.log(`save message received with ${message.mode} and ${message.edits} and ${message.removals}`);
+								// todo: loop through the edits and removals and call appropriate editDicom function
+
+							case "reload":
 								// reload the metadata panel with original content
 								if (metadataPanel) {
 									metadataPanel.dispose();
@@ -175,7 +152,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				<title>DICOM Image</title>
 			</head>
 			<body>
-				<h3>uh oh, something went wrong</h3>
+				<h3>Uh oh, something went wrong while displaying this image</h3>
 			</body>
 			</html>`;
 		}
