@@ -77,11 +77,17 @@ td {
 }
 #dicom-actions {
     position: fixed;
-    top: 20px;
+    bottom: 20px;
     right: 30px;
     z-index: 2000;
     display: none;
     gap: 8px;
+    background-color: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 6px;
+    padding: 12px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    backdrop-filter: blur(4px);
 }
 .dicom-action-btn {
     background: #007ACC;
@@ -100,7 +106,6 @@ td {
 .dicom-action-btn.replace {
     background: #666;
 }
-/* Add to metadataWebview.css */
 #dicom-actions .tooltip {
     position: relative;
     display: inline-block;

@@ -3,7 +3,6 @@
 // get vscode api
 const vscode = acquireVsCodeApi();
 let currentEditingCell = null;
-// only non-binary data is editable
 let editable = true;
 let edited = false;
 let ogValue = '';
@@ -13,7 +12,7 @@ let buttonRow = null;
 let pendingEdits = {};
 let pendingRemovals = new Set();
 let hasChanges = false;
-let isInvalid = false;
+let isDicomInvalid = false;
 
 // once something has been edited, buttons pop up to save or discard changes to the dicom
 function showDicomActions(show) {
@@ -26,7 +25,7 @@ function markChanged(invalidated) {
     hasChanges = true;
     if (invalidated) {
         addInvalidatedWarnings();
-        isInvalid = true;
+        isDicomInvalid = true;
     }
     // todo: add check for if it reverted
     showDicomActions(true);
@@ -42,14 +41,21 @@ function addInvalidatedWarnings() {
         saveBtn.classList.add('has-tooltip');
         const saveTooltip = document.createElement('span');
         saveTooltip.className = 'warning-tooltip';
-        saveTooltip.textContent = 'Warning: Changes may invalidate DICOM compliance';
+        saveTooltip.textContent = 'Warning: Changes may violate DICOM standard and invalidate the file.';
+        // make sure the text fits into the tooltip lmao
+        saveTooltip.style.whiteSpace = 'normal';
+        saveTooltip.style.wordBreak = 'break-word';
+        saveTooltip.style.maxWidth = '200px';
         saveBtn.appendChild(saveTooltip);
     }
     if (!replaceBtn.classList.contains('has-tooltip')) {
         replaceBtn.classList.add('has-tooltip');
         const replaceTooltip = document.createElement('span');
         replaceTooltip.className = 'warning-tooltip';
-        replaceTooltip.textContent = 'Warning: Changes may invalidate DICOM compliance';
+        replaceTooltip.textContent = 'Warning: Changes may violate DICOM standard and invalidate the file.';
+        replaceTooltip.style.whiteSpace = 'normal';
+        replaceTooltip.style.wordBreak = 'break-word';
+        replaceTooltip.style.maxWidth = '200px';
         replaceBtn.appendChild(replaceTooltip);
     }
 }
@@ -84,8 +90,6 @@ function getVR(cell) {
     return row.cells[2].textContent.trim();
 }
 
-// fixme: make the dicomactoins row look nicer/be nicer location
-// idea: move it to the bottom and have a small background popup with it, making the things behind it unclickable
 document.addEventListener("DOMContentLoaded", function() {
     /* listen to when editable-cell is in focus. when in focus, create the extra row below it with the buttons
             save edits (blue), cancel edits (grey), and remove row (red)
@@ -118,8 +122,8 @@ document.addEventListener("DOMContentLoaded", function() {
         }
     });
 
-    // fixme: when you switch directly from one cell to another, doesn't fire properly
     // when cell goes out of focus, remove the editing buttons row
+    // fixme: switching from one cell directly to another is buggy because of the timeout. also there's some error with textcontent
     document.addEventListener("focusout", function(e) {
         setTimeout(() => {
             if (currentEditingCell?.textContent === "" && edited) {
@@ -135,15 +139,14 @@ document.addEventListener("DOMContentLoaded", function() {
                 const val = currentEditingCell.textContent;
                 console.log(val);
                 // if it's a valid 8-digit date, format it
-                if (val.length === 8 && /^\d+$/.test(val)) {
+                if (val?.length === 8 && /^\d+$/.test(val)) {
                     currentEditingCell.textContent = `${val.slice(0, 4)}/${val.slice(4, 6)}/${val.slice(6, 8)}`;
                 }
                 // if it's already formatted but was reverted to original, reformat the original
-                else if (ogValue.length === 8 && /^\d+$/.test(ogValue) && val === ogValue) {
+                else if (ogValue && ogValue.length === 8 && /^\d+$/.test(ogValue) && val === ogValue) {
                     currentEditingCell.textContent = `${ogValue.slice(0, 4)}/${ogValue.slice(4, 6)}/${ogValue.slice(6, 8)}`;
                 }
             }
-            
             currentEditingCell = null;
             editable = true;
             edited = false;
@@ -160,7 +163,6 @@ document.addEventListener("DOMContentLoaded", function() {
             currentEditingCell = null;
             removeButtonsRow();
         }
-        // enter button has the same functionality as clicking save
         if (e.key === "Enter" && currentEditingCell) {
             const newValue = currentEditingCell.textContent;
             // check if the value changed at all
@@ -168,8 +170,15 @@ document.addEventListener("DOMContentLoaded", function() {
                 // get the dicom tag of the currenteditingcell (first column)
                 const hexTag = getHexTag(currentEditingCell);
                 const VR = getVR(currentEditingCell);
+                
+                // store the raw value for DICOM, not the formatted display value
+                let rawValue = newValue;
+                if (VR === "DA" && newValue.includes("/")) {
+                    // convert formatted date
+                    rawValue = newValue.replace(/\//g, "");
+                }
                 // store edit, don't send to extension yet
-                pendingEdits[hexTag] = { vr: VR, value: newValue };
+                pendingEdits[hexTag] = { vr: VR, value: rawValue };
                 // if the tag was required but still edited, mark as potentially invalidated
                 markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 edited = true;
@@ -178,8 +187,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 currentEditingCell.textContent = ogValue;
                 console.log("cannot edit binary data");
             }
-            // remove focus from the cell
-             currentEditingCell.blur();
+            currentEditingCell.blur();
         }
     });
 
@@ -187,23 +195,28 @@ document.addEventListener("DOMContentLoaded", function() {
     document.addEventListener("click", function(e) {
         if (e.target.classList.contains("save-edits")) {
             const newValue = currentEditingCell.textContent;
+            // check if the value changed at all
             if (newValue !== ogValue && editable) {
+                // get the dicom tag of the currenteditingcell (first column)
                 const hexTag = getHexTag(currentEditingCell);
                 const VR = getVR(currentEditingCell);
-                pendingEdits[hexTag] = { vr: VR, value: newValue };
+                
+                // store the raw value for DICOM, not the formatted display value
+                let rawValue = newValue;
+                if (VR === "DA" && newValue.includes("/")) {
+                    // convert formatted date
+                    rawValue = newValue.replace(/\//g, "");
+                }
+                // store edit, don't send to extension yet
+                pendingEdits[hexTag] = { vr: VR, value: rawValue };
                 // if the tag was required but still edited, mark as potentially invalidated
                 markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 edited = true;
             }
-            // fixme: distinguish between editable and removable (ex. binary data cannot be edited)
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
-                console.log("cannot edit");
-                // remove focus from the cell and remove buttons row
-                currentEditingCell.blur();
-                removeButtonsRow();
+                console.log("cannot edit binary data");
             }
-            // remove focus from the cell
             currentEditingCell.blur();
         }
         // check for "remove row" button
@@ -314,6 +327,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     '<span class="tooltiptext">Binary data cannot be edited.</span>' +
                 '</div>';
             removeButtonHTML = '<button class="action-button remove-row" style="background: #E74C3C; color: white; border: none; padding: 5px 10px; margin: 0 5px; border-radius: 3px; cursor: pointer;">Remove Row</button>';
+            editable = false;
         }
         else if (tagRequired === "ok") {
             // regular remove and save button for non-required tags
@@ -331,7 +345,6 @@ document.addEventListener("DOMContentLoaded", function() {
         buttonRow = newRow;
         return editable;
     }
-
 
     // required tags list from https://www.pclviewer.com/help/required_dicom_tags.htm
     // type 1: cannot be removed or empty
@@ -374,7 +387,6 @@ document.addEventListener("DOMContentLoaded", function() {
         ];
 
         const vr = getVR(cell);
-
         if (imageRequiredTags.includes(tag)) {
             return "image";
         }

@@ -5,11 +5,16 @@ export function saveDicomEdit(tag:string, vr:string, newValue:string, filepath:s
     // load dicom file and get data
     tag = tag.replace(/^x/, "");
     const dicomFile = fs.readFileSync(filepath);
-    const originalDicomData = dcmjs.data.DicomMessage.readFile(dicomFile.buffer);
+    const arrayBuffer = dicomFile.buffer.slice(
+        dicomFile.byteOffset,
+        dicomFile.byteOffset + dicomFile.byteLength
+    );
+    const originalDicomData = dcmjs.data.DicomMessage.readFile(arrayBuffer);
     const dicomDict = new dcmjs.data.DicomDict(originalDicomData.meta || {});
     dicomDict.dict = originalDicomData.dict;
     
     // update the tag with the new value
+    // fixme: deal with character limits like CS vr
     dicomDict.upsertTag(tag, vr, [String(newValue)]);
     
     // re-encode and save to either a new file or the same file, depending on user choice
@@ -30,7 +35,11 @@ export function removeDicomTag(tag:string, filepath:string, mode:string) {
     // load dicom file and get data
     tag = tag.replace(/^x/, "");
     const dicomFile = fs.readFileSync(filepath);
-    const originalDicomData = dcmjs.data.DicomMessage.readFile(dicomFile.buffer);
+    const arrayBuffer = dicomFile.buffer.slice(
+        dicomFile.byteOffset,
+        dicomFile.byteOffset + dicomFile.byteLength
+    );
+    const originalDicomData = dcmjs.data.DicomMessage.readFile(arrayBuffer);
     const dicomDict = new dcmjs.data.DicomDict(originalDicomData.meta || {});
     dicomDict.dict = originalDicomData.dict;
 

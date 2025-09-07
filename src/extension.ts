@@ -24,6 +24,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		token:vscode.CancellationToken
 	): Promise<void> {
 		let filepath = document.uri.fsPath;
+		let isCompressed = false;
 		if (filepath.includes(".dcm")) {
 			imagePanel.webview.options = {
 				enableScripts: true,
@@ -32,6 +33,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			const base64Image = convertDicomToBase64(filepath);
 			if (base64Image === "compressed") {
 				imagePanel.webview.html = this.getCompressedImageFailedContent();
+				isCompressed = true;
 			}
 			else {
 				imagePanel.webview.html = this.getImageWebviewContent(base64Image);
@@ -39,7 +41,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			
         	let metadataPanel: vscode.WebviewPanel | undefined;
 			const metadata = getMetadata(filepath);
-			const originalMetadataHTML = this.getMetadataWebviewContent(metadata);
+			const originalMetadataHTML = this.getMetadataWebviewContent(metadata, isCompressed);
 
 			// create the side-by-side view of metadata
 			const createMetadataPanel = () => {
@@ -54,23 +56,43 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 
 				metadataPanel.webview.html = originalMetadataHTML;
 
-				// handle messages from the webview - call functions from editDicom for appropriate commands
+				// handle messages from the webview
 				metadataPanel.webview.onDidReceiveMessage(
 					message => {
-						// update the dicom according to accumulated saves and removals 
-						switch (message.command) {
-							case "saveAll":
-								console.log(`save message received with ${message.mode} and ${message.edits} and ${message.removals}`);
-								// todo: loop through the edits and removals and call appropriate editDicom function
-
-							case "reload":
-								// reload the metadata panel with original content
-								if (metadataPanel) {
-									metadataPanel.dispose();
-        							createMetadataPanel();
-									console.log("reset DOM");
-								}
-								break;
+						// fixme: make it clearer BEFORE the user tries to edit anything that they can't on compressed images
+						if (isCompressed) {
+							// don't let it do anything, just say cannot edit compressed dicom and reset
+							vscode.window.showInformationMessage("Cannot modify a compressed DICOM");
+							resetMetadataPanel();
+							metadataPanel?.webview.postMessage({
+								command: "reset"
+							});
+						}
+						else {
+							// update the dicom according to accumulated saves and removals 
+							switch (message.command) {
+								case "saveAll":
+									console.log(`save message received with ${message.mode} and ${message.edits} and ${message.removals}`);
+									for (const [key, value] of Object.entries(message.edits)) {
+										console.log(`edit, ${key}: ${value}`);
+										if (typeof value === 'object' && value !== null && 'vr' in value && 'value' in value) {
+											const { vr, value: val } = value as { vr:string, value:any };
+											saveDicomEdit(key, vr, val, filepath, "new");
+										}
+									}
+									for (const tag of message.removals) {
+										console.log("removal", tag);
+										removeDicomTag(tag, filepath, "new");
+									}
+									if (message.mode === "new") {
+										// reset the original
+										resetMetadataPanel();
+									}
+									break;
+								case "reload":
+									resetMetadataPanel();
+									break;
+							}
 						}
 					},
 					undefined,
@@ -104,6 +126,15 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					}
 				}
 			});
+
+			// reload the metadata panel with original content
+			const resetMetadataPanel = () => {
+				if (metadataPanel) {
+					metadataPanel.dispose();
+					createMetadataPanel();
+					console.log("reset DOM");
+				}
+			};
 		}
 	}
 
@@ -158,7 +189,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		}
 	}
 
-	getMetadataWebviewContent(metadata: Array<any>) {
+	getMetadataWebviewContent(metadata: Array<any>, isCompressed:boolean) {
 		if (metadata.length === 1) {
 			return `<!DOCTYPE html>
 			<html lang="en">
@@ -199,9 +230,16 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				}
 			});
 			tableRows += '</tbody>';
-
+			
+			//fixme: URIs not paths
+			let scriptPath;
+			if (isCompressed) {
+				scriptPath = vscode.Uri.joinPath(this.context.extensionUri, 'src', 'uneditableMetadata.js');
+			}
+			else {
+				scriptPath = vscode.Uri.joinPath(this.context.extensionUri, 'src', 'editableMetadataWebview.js');
+			}
 			const cssPath = vscode.Uri.joinPath(this.context.extensionUri, 'src', 'metadataWebview.css');
-			const scriptPath = vscode.Uri.joinPath(this.context.extensionUri, 'src', 'metadataWebview.js');
 			
 			const cssContent = fs.readFileSync(cssPath.fsPath, 'utf8');
 			const scriptContent = fs.readFileSync(scriptPath.fsPath, 'utf8');
@@ -218,14 +256,14 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				</style>
 			</head>
 			<body>
+				<table>
+					${tableRows}
+				</table>
 				<div id="dicom-actions">
 					<button class="dicom-action-btn save" title="Save as new DICOM">Save New DICOM</button>
 					<button class="dicom-action-btn replace" title="Replace original DICOM">Replace DICOM</button>
 					<button class="dicom-action-btn discard" title="Discard all changes">Discard Changes</button>
 				</div>
-				<table>
-					${tableRows}
-				</table>
 				<script>
 					${scriptContent}
 				</script>
