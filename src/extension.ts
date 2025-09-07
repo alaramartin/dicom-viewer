@@ -59,18 +59,16 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				// handle messages from the webview
 				metadataPanel.webview.onDidReceiveMessage(
 					message => {
-						// fixme: make it clearer BEFORE the user tries to edit anything that they can't on compressed images
 						if (isCompressed) {
 							// don't let it do anything, just say cannot edit compressed dicom and reset
-							vscode.window.showInformationMessage("Cannot modify a compressed DICOM");
-							resetMetadataPanel();
-							metadataPanel?.webview.postMessage({
-								command: "reset"
-							});
+							vscode.window.showInformationMessage("Cannot modify a compressed DICOM.");
 						}
 						else {
 							// update the dicom according to accumulated saves and removals 
 							switch (message.command) {
+								// should be caught by the above conditional but just in case
+								case "prevent-edit":
+									vscode.window.showInformationMessage("Cannot modify a compressed DICOM.");
 								case "saveAll":
 									console.log(`save message received with ${message.mode} and ${message.edits} and ${message.removals}`);
 									for (const [key, value] of Object.entries(message.edits)) {
