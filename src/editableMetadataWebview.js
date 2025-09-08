@@ -100,6 +100,8 @@ document.addEventListener("DOMContentLoaded", function() {
     // when editable cell is in focus
     document.addEventListener("focusin", function(e) {
         if (e.target.classList.contains("editable-cell")) {
+            editable = true;
+            edited = false;
             // keep track of the cell being edited and its original value
             currentEditingCell = e.target;
             ogValue = e.target.textContent;
@@ -123,33 +125,40 @@ document.addEventListener("DOMContentLoaded", function() {
     });
 
     // when cell goes out of focus, remove the editing buttons row
-    // fixme: switching from one cell directly to another is buggy because of the timeout. also there's some error with textcontent
     document.addEventListener("focusout", function(e) {
+        const oldCell = currentEditingCell;
+        const oldOgValue = oldCell.textContent;
+        const wasEdited = edited; // capture the edited state at the time of focusout
         setTimeout(() => {
-            if (currentEditingCell?.textContent === "" && edited) {
+            if (!document.body.contains(oldCell)) { return; }
+
+            if (oldCell.textContent === "" && wasEdited) {
                 // display empty cell as "[Empty]"
-                currentEditingCell.textContent = "[Empty]";
+                oldCell.textContent = "[Empty]";
             }
             // if no changes were saved, then revert back to original when focused out
-            else if (!edited && currentEditingCell) {
-                currentEditingCell.textContent = ogValue;
+            else if (!wasEdited && oldCell) {
+                oldCell.textContent = oldOgValue;
             }
             // reformat dates
-            if (currentEditingCell && getVR(currentEditingCell) === "DA") {
-                const val = currentEditingCell.textContent;
+            if (oldCell && getVR(oldCell) === "DA") {
+                const val = oldCell.textContent;
                 // if it's a valid 8-digit date, format it
                 if (val?.length === 8 && /^\d+$/.test(val)) {
-                    currentEditingCell.textContent = `${val.slice(0, 4)}/${val.slice(4, 6)}/${val.slice(6, 8)}`;
+                    oldCell.textContent = `${val.slice(0, 4)}/${val.slice(4, 6)}/${val.slice(6, 8)}`;
                 }
                 // if it's already formatted but was reverted to original, reformat the original
-                else if (ogValue && ogValue.length === 8 && /^\d+$/.test(ogValue) && val === ogValue) {
-                    currentEditingCell.textContent = `${ogValue.slice(0, 4)}/${ogValue.slice(4, 6)}/${ogValue.slice(6, 8)}`;
+                else if (oldOgValue && oldOgValue.length === 8 && /^\d+$/.test(oldOgValue) && val === oldOgValue) {
+                    oldCell.textContent = `${oldOgValue.slice(0, 4)}/${oldOgValue.slice(4, 6)}/${oldOgValue.slice(6, 8)}`;
                 }
             }
-            currentEditingCell = null;
-            editable = true;
-            edited = false;
-            removeButtonsRow();
+            // if a new cell hasn't been clicked on
+            if (currentEditingCell === oldCell) {
+                currentEditingCell = null;
+                editable = true;
+                edited = false;
+                removeButtonsRow();
+            }
         }, 100);
     });
 

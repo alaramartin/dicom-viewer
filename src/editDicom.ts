@@ -1,6 +1,5 @@
 import fs from "fs";
 import * as dcmjs from "dcmjs";
-import * as vscode from 'vscode';
 
 export function saveDicomEdit(tag:string, vr:string, newValue:string, filepath:string, mode:string) {
     // load dicom file and get data
@@ -15,7 +14,7 @@ export function saveDicomEdit(tag:string, vr:string, newValue:string, filepath:s
     dicomDict.dict = originalDicomData.dict;
     
     // update the tag with the new value
-    // fixme: ERR [Extension Host] Invalid vr type ox - using OW
+    // ERR [Extension Host] Invalid vr type ox - using OW
     //      note: might have to ignore this one... seems like the code still executes
     dicomDict.upsertTag(tag, vr, [String(newValue)]);
     
