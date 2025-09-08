@@ -2,7 +2,7 @@
   "name": "dicom-viewer",
   "displayName": "DICOM Viewer & Editor",
   "description": "View DICOM images and edit metadata side-by-side, right in your VS Code editor.",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "publisher": "alarm",
   "icon": "media/images/logo.png",
   "repository": {
