@@ -1,25 +1,35 @@
-# DICOM Viewer
+# DICOM Viewer & Editor
 
-Open DICOM (.dcm) files directly in VS Code. View both the image and associated metadata side-by-side.
+View and edit DICOM (.dcm) files directly in VS Code. View both the image and associated metadata side-by-side. Edit metadata and save edited DICOMs in the side panel.
 
 ## Features
 
-- Displays DICOM image
-- Presents file metadata including tags, value representations (VRs), and attribute values
-- Activates as soon as you click on a .dcm file
+- **Viewer**: Display DICOM images as well as file metadata including tags, value representations (VRs), and attribute values
+- **Editor**: Edit DICOM tags directly from the metadata display
+    - Includes warnings to ensure that file remains in valid DICOM standard format
+    - Choose to update current file or create new file with changes
+- **Easy to use**: Activates as soon as you click on a .dcm file
 
-### Example
-![example](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/example-dicom.png)
+### Examples
+Viewing:
+![example1](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/example-dicom.png)
 
-Note: this extension currently does not support displaying compressed images or the official name/VR of private tags.
+Editing:
+![example2](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/example-dicom-edit.png)
+![example3](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/example-dicom-warning.png)
+
+Note: This extension currently does not support displaying or editing compressed images. The official names and VRs of private tags may not be identified. Binary data and tags required for image display cannot be edited.
+
 
 ## Installation
 
 Click the "Install" button. No additional dependencies to worry about :)
 
+
 ## Contributing
 
 Feel free to open issues and pull requests. I'll be regularly checking activity on the [repository](https://github.com/alaramartin/dicom-viewer)!
+
 
 ## License
 

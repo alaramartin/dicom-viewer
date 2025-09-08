@@ -109,6 +109,7 @@ export function convertDicomToBase64(filepath: string): string {
 
 export function getMetadata(filepath: string): Array<any> {
     let metadata = [["Hex Tag", "Tag Name", "VR", "Value"]];
+    const dictionary = require('@iwharris/dicom-data-dictionary');
     try {
         const dicomFile = fs.readFileSync(filepath);
         const dataSet = dicomParser.parseDicom(dicomFile);
@@ -122,24 +123,25 @@ export function getMetadata(filepath: string): Array<any> {
                 const element = dataSet.elements[tag];
 
                 try {
-                    const dictionary = require('@iwharris/dicom-data-dictionary');
                     const elem = dictionary.get_element(cleanTag);
                     tagName = elem["name"];
                     vr = elem["vr"];
                 }
-                catch (e) {
-                    console.log("iwharris", e);
+                catch {
+                    // ignore the error, it's just iwharris not finding the vr
                 }
                 
                 // use the VR from the element if available, otherwise use our lookup
-                const finalVr = element.vr || vr;
+                let finalVr = element.vr || vr;
+                finalVr = normalizeVR(finalVr);
                 
                 let value = '';
                 
                 // handle different vr types
                 if (finalVr === 'SQ') {
                     value = '[Sequence]';
-                } else if (finalVr === 'OB' || finalVr === 'OW' || finalVr === 'OF') {
+                    // fixme: make SQ a dropdown/collapsible sequence element with each element within
+                } else if (finalVr === 'OB' || finalVr === 'OW' || finalVr === 'OF' || finalVr === 'OD') {
                     value = '[Binary Data]';
                 } else if (finalVr === 'DA') {
                     // if the VR is a date, make it more readable format (YYYY/MM/DD)
@@ -167,4 +169,26 @@ export function getMetadata(filepath: string): Array<any> {
         console.error('Error parsing DICOM', ex);
     }
     return metadata;
+}
+
+// fixes invalid VRs
+function normalizeVR(vr:string) {
+    // full list of every valid VR
+    const validVrList = [
+        "AE", "AS", "AT", "CS", "DA", "DS", "DT", "FL", "FD", "IS", "LO", "LT", 
+        "OB", "OD", "OF", "OW", "PN", "SH", "SL", "SQ", "SS", "ST", "TM", "UI",
+        "UL", "UN", "US", "UT"
+    ];
+    // dict of some common invalid -> valid VR mappings
+    const commonMappings: { [key:string]:string } = {
+        "XS": "US",
+        "OX": "OW"
+    };
+
+    if (!validVrList.includes(vr)) {
+        return commonMappings[vr] ?? "UN";
+    }
+    else {
+        return vr;
+    }
 }

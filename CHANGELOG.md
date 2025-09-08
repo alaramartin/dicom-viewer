@@ -9,3 +9,7 @@ All notable changes to the "dicom-viewer" extension will be documented in this f
 # [0.1.1]
 
 - Formatted dates (VR tag: DA)
+
+# [1.0.1]
+
+- Added editing functionality
