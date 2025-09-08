@@ -40,8 +40,8 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			}
 			
         	let metadataPanel: vscode.WebviewPanel | undefined;
-			const metadata = getMetadata(filepath);
-			const originalMetadataHTML = this.getMetadataWebviewContent(metadata, isCompressed);
+			const originalMetadata = getMetadata(filepath);
+			let metadata = originalMetadata;
 
 			// create the side-by-side view of metadata
 			const createMetadataPanel = () => {
@@ -54,7 +54,23 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					{ enableScripts: true }
 				);
 
-				metadataPanel.webview.html = originalMetadataHTML;
+				const cssUri = metadataPanel.webview.asWebviewUri(
+					vscode.Uri.joinPath(this.context.extensionUri, 'src', 'metadataWebview.css')
+				);
+				let scriptUri;
+				if (isCompressed) {
+					scriptUri = metadataPanel.webview.asWebviewUri(
+						vscode.Uri.joinPath(this.context.extensionUri, 'src', 'uneditableMetadata.js')
+					);
+				}
+				else {
+					scriptUri = metadataPanel.webview.asWebviewUri(
+						vscode.Uri.joinPath(this.context.extensionUri, 'src', 'editableMetadataWebview.js')
+					);
+				}
+				// always initialize with original metadata
+				metadataPanel.webview.html = this.getMetadataWebviewContent(metadata, cssUri, scriptUri);
+				
 
 				// handle messages from the webview
 				metadataPanel.webview.onDidReceiveMessage(
@@ -75,7 +91,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 										console.log(`edit, ${key}: ${value}`);
 										if (typeof value === 'object' && value !== null && 'vr' in value && 'value' in value) {
 											const { vr, value: val } = value as { vr:string, value:any };
-											saveDicomEdit(key, vr, val, filepath, "new");
+											saveDicomEdit(key, vr, val, filepath, message.mode);
 										}
 									}
 									for (const tag of message.removals) {
@@ -85,6 +101,13 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									if (message.mode === "new") {
 										// reset the original
 										resetMetadataPanel();
+									} else if (message.mode === "replace") {
+										// reload metadata from the updated file
+										const updatedMetadata = getMetadata(filepath);
+										metadata = updatedMetadata;
+										if (metadataPanel) {
+											metadataPanel.webview.html = this.getMetadataWebviewContent(metadata, cssUri, scriptUri);
+										}
 									}
 									break;
 								case "reload":
@@ -187,7 +210,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		}
 	}
 
-	getMetadataWebviewContent(metadata: Array<any>, isCompressed:boolean) {
+	getMetadataWebviewContent(metadata: Array<any>, cssUri:vscode.Uri, scriptUri:vscode.Uri) {
 		if (metadata.length === 1) {
 			return `<!DOCTYPE html>
 			<html lang="en">
@@ -228,20 +251,6 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				}
 			});
 			tableRows += '</tbody>';
-			
-			//fixme: URIs not paths
-			let scriptPath;
-			if (isCompressed) {
-				scriptPath = vscode.Uri.joinPath(this.context.extensionUri, 'src', 'uneditableMetadata.js');
-			}
-			else {
-				scriptPath = vscode.Uri.joinPath(this.context.extensionUri, 'src', 'editableMetadataWebview.js');
-			}
-			const cssPath = vscode.Uri.joinPath(this.context.extensionUri, 'src', 'metadataWebview.css');
-			
-			const cssContent = fs.readFileSync(cssPath.fsPath, 'utf8');
-			const scriptContent = fs.readFileSync(scriptPath.fsPath, 'utf8');
-
 
 			return `<!DOCTYPE html>
 			<html lang="en">
@@ -249,9 +258,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<title>DICOM Metadata</title>
-				<style>
-					${cssContent}
-				</style>
+				<link href="${cssUri}" rel="stylesheet" />
 			</head>
 			<body>
 				<table>
@@ -262,9 +269,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					<button class="dicom-action-btn replace" title="Replace original DICOM">Replace DICOM</button>
 					<button class="dicom-action-btn discard" title="Discard all changes">Discard Changes</button>
 				</div>
-				<script>
-					${scriptContent}
-				</script>
+				<script src="${scriptUri}"></script>
 			</body>
 			</html>`;
 		}

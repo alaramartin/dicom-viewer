@@ -15,6 +15,7 @@ export function saveDicomEdit(tag:string, vr:string, newValue:string, filepath:s
     
     // update the tag with the new value
     // fixme: deal with character limits like CS vr
+    // hack: yknow what... just tell the user the error and say their dicom is too invalid to edit or something
     dicomDict.upsertTag(tag, vr, [String(newValue)]);
     
     // re-encode and save to either a new file or the same file, depending on user choice
