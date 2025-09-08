@@ -12,11 +12,11 @@ View and edit DICOM (.dcm) files directly in VS Code. View both the image and as
 
 ### Examples
 Viewing:
-![example1](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/example-dicom.png)
+![example1](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/images/example-dicom.png)
 
 Editing:
-![example2](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/example-dicom-edit.png)
-![example3](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/example-dicom-warning.png)
+![example2](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/images/example-dicom-edit.png)
+![example3](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/images/example-dicom-warning.png)
 
 Note: This extension currently does not support displaying or editing compressed images. The official names and VRs of private tags may not be identified. Binary data and tags required for image display cannot be edited.
 

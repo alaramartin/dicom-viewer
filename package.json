@@ -4,7 +4,7 @@
   "description": "View DICOM images and edit metadata side-by-side, right in your VS Code editor.",
   "version": "0.1.1",
   "publisher": "alarm",
-  "icon": "media/logo.png",
+  "icon": "media/images/logo.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/alaramartin/dicom-viewer.git"
@@ -47,6 +47,14 @@
       }
     ]
   },
+  "files": [
+    "out",
+    "media",
+    "README.md",
+    "LICENSE.md",
+    "CHANGELOG.md",
+    "node_modules"
+  ],
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
@@ -65,7 +73,8 @@
     "@vscode/test-cli": "^0.0.11",
     "@vscode/test-electron": "^2.5.2",
     "eslint": "^9.32.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vscode": "^1.1.34"
   },
   "dependencies": {
     "@iwharris/dicom-data-dictionary": "^1.26.0",

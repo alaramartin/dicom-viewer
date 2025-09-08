@@ -54,17 +54,17 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				);
 
 				const cssUri = metadataPanel.webview.asWebviewUri(
-					vscode.Uri.joinPath(this.context.extensionUri, 'src', 'metadataWebview.css')
+					vscode.Uri.joinPath(this.context.extensionUri, 'media', 'metadataWebview.css')
 				);
 				let scriptUri;
 				if (isCompressed) {
 					scriptUri = metadataPanel.webview.asWebviewUri(
-						vscode.Uri.joinPath(this.context.extensionUri, 'src', 'uneditableMetadata.js')
+						vscode.Uri.joinPath(this.context.extensionUri, 'media', 'uneditableMetadata.js')
 					);
 				}
 				else {
 					scriptUri = metadataPanel.webview.asWebviewUri(
-						vscode.Uri.joinPath(this.context.extensionUri, 'src', 'editableMetadataWebview.js')
+						vscode.Uri.joinPath(this.context.extensionUri, 'media', 'editableMetadataWebview.js')
 					);
 				}
 				// always initialize with original metadata
