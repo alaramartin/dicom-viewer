@@ -1,6 +1,5 @@
 import * as dicomParser from 'dicom-parser';
 import * as fs from 'fs';
-import { normalize } from 'path';
 import { PNG } from 'pngjs';
 
 export function convertDicomToBase64(filepath: string): string {
@@ -110,6 +109,7 @@ export function convertDicomToBase64(filepath: string): string {
 
 export function getMetadata(filepath: string): Array<any> {
     let metadata = [["Hex Tag", "Tag Name", "VR", "Value"]];
+    const dictionary = require('@iwharris/dicom-data-dictionary');
     try {
         const dicomFile = fs.readFileSync(filepath);
         const dataSet = dicomParser.parseDicom(dicomFile);
@@ -123,13 +123,12 @@ export function getMetadata(filepath: string): Array<any> {
                 const element = dataSet.elements[tag];
 
                 try {
-                    const dictionary = require('@iwharris/dicom-data-dictionary');
                     const elem = dictionary.get_element(cleanTag);
                     tagName = elem["name"];
                     vr = elem["vr"];
                 }
-                catch (e) {
-                    console.log("iwharris", e);
+                catch {
+                    // ignore the error, it's just iwharris not finding the vr
                 }
                 
                 // use the VR from the element if available, otherwise use our lookup

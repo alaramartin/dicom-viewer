@@ -131,13 +131,12 @@ document.addEventListener("DOMContentLoaded", function() {
                 currentEditingCell.textContent = "[Empty]";
             }
             // if no changes were saved, then revert back to original when focused out
-            else if (!edited) {
+            else if (!edited && currentEditingCell) {
                 currentEditingCell.textContent = ogValue;
             }
             // reformat dates
             if (currentEditingCell && getVR(currentEditingCell) === "DA") {
                 const val = currentEditingCell.textContent;
-                console.log(val);
                 // if it's a valid 8-digit date, format it
                 if (val?.length === 8 && /^\d+$/.test(val)) {
                     currentEditingCell.textContent = `${val.slice(0, 4)}/${val.slice(4, 6)}/${val.slice(6, 8)}`;
@@ -185,7 +184,6 @@ document.addEventListener("DOMContentLoaded", function() {
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
-                console.log("cannot edit binary data");
             }
             currentEditingCell.blur();
         }
@@ -215,7 +213,6 @@ document.addEventListener("DOMContentLoaded", function() {
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
-                console.log("cannot edit binary data");
             }
             currentEditingCell.blur();
         }
@@ -231,7 +228,6 @@ document.addEventListener("DOMContentLoaded", function() {
             }
             else {
                 currentEditingCell.textContent = ogValue;
-                console.log("cannot remove");
             }
             // remove focus from the cell
             currentEditingCell.blur();
@@ -273,7 +269,6 @@ document.addEventListener("DOMContentLoaded", function() {
 
     // add a row below the editing row that displays 3 button options
     function createButtonsRow(cell) {
-        console.log("create");
         // remove button row if already existing
         removeButtonsRow();
 
@@ -367,7 +362,6 @@ document.addEventListener("DOMContentLoaded", function() {
         ];
         
         // tags that should be warned before removal because will probably invalidate
-        // todo: check if these are correct and fully inclusive
         const requiredTags = [
             "00080016", // SOPClassUID
             "00080018", // SOPInstanceUID  
@@ -407,6 +401,5 @@ document.addEventListener("DOMContentLoaded", function() {
         hasChanges = false;
         removeInvalidatedWarnings();
         showDicomActions(false);
-        console.log("reset changes");
     }
 });

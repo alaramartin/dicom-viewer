@@ -1,5 +1,6 @@
 import fs from "fs";
 import * as dcmjs from "dcmjs";
+import * as vscode from 'vscode';
 
 export function saveDicomEdit(tag:string, vr:string, newValue:string, filepath:string, mode:string) {
     // load dicom file and get data
@@ -14,8 +15,8 @@ export function saveDicomEdit(tag:string, vr:string, newValue:string, filepath:s
     dicomDict.dict = originalDicomData.dict;
     
     // update the tag with the new value
-    // fixme: deal with character limits like CS vr
-    // hack: yknow what... just tell the user the error and say their dicom is too invalid to edit or something
+    // fixme: ERR [Extension Host] Invalid vr type ox - using OW
+    //      note: might have to ignore this one... seems like the code still executes
     dicomDict.upsertTag(tag, vr, [String(newValue)]);
     
     // re-encode and save to either a new file or the same file, depending on user choice
@@ -47,9 +48,6 @@ export function removeDicomTag(tag:string, filepath:string, mode:string) {
     // check if the tag exists (it should) and delete
     if (dicomDict.dict[tag]) {
         delete dicomDict.dict[tag];
-        console.log(`tag ${tag} removed from ${filepath}`);
-    } else {
-        console.warn(`tag ${tag} not found in ${filepath}`);
     }
 
     // re-encode and save to either a new file or the same file, depending on user choice

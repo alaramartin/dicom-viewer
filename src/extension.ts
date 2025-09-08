@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import { convertDicomToBase64, getMetadata } from './getImage';
 import { saveDicomEdit, removeDicomTag } from './editDicom';
 
@@ -86,17 +85,29 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								case "prevent-edit":
 									vscode.window.showInformationMessage("Cannot modify a compressed DICOM.");
 								case "saveAll":
-									console.log(`save message received with ${message.mode} and ${message.edits} and ${message.removals}`);
 									for (const [key, value] of Object.entries(message.edits)) {
-										console.log(`edit, ${key}: ${value}`);
 										if (typeof value === 'object' && value !== null && 'vr' in value && 'value' in value) {
 											const { vr, value: val } = value as { vr:string, value:any };
-											saveDicomEdit(key, vr, val, filepath, message.mode);
+											try {
+												saveDicomEdit(key, vr, val, filepath, message.mode);
+											} catch (e) {
+												vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
+												console.log(e);
+												// reset the webview html and the pending changes
+												resetMetadataPanel();
+												break;
+											}
 										}
 									}
 									for (const tag of message.removals) {
-										console.log("removal", tag);
-										removeDicomTag(tag, filepath, "new");
+										try {
+											removeDicomTag(tag, filepath, "new");
+										} catch (e) {
+											vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
+											console.log(e);
+											// reset the webview html and the pending changes
+											resetMetadataPanel();
+										}
 									}
 									if (message.mode === "new") {
 										// reset the original
@@ -153,7 +164,6 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				if (metadataPanel) {
 					metadataPanel.dispose();
 					createMetadataPanel();
-					console.log("reset DOM");
 				}
 			};
 		}
