@@ -85,7 +85,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								case "prevent-edit":
 									vscode.window.showInformationMessage("Cannot modify a compressed DICOM.");
 								case "saveAll":
-									for (const editData of Object.entries(message.edits)) {
+									for (const [_, editData] of Object.entries(message.edits)) {
 										try {
 											saveDicomEdit(editData, filepath, message.mode);
 										} catch (e) {

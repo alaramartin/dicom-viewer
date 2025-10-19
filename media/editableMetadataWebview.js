@@ -93,8 +93,7 @@ function getVR(cell) {
 function getSequenceInfo(cell) {
     const row = cell.closest('tr');
     const parentAttr = row.getAttribute('data-parent');
-    console.log(parentAttr);
-    console.log(row.className);
+
     // check if parent is a sequence item, which indicates hat the element is a sequence elemnt
     if (parentAttr && parentAttr.includes('_item_')) {
         const parts = parentAttr.match(/^(.+)_item_(\d+)$/);
@@ -186,8 +185,10 @@ document.addEventListener("DOMContentLoaded", function() {
             return;
         }
 
-        const oldOgValue = ogValue;;
+        const oldOgValue = ogValue;
         const wasEdited = edited; // capture the edited state at the time of focusout
+        const isClickingSave = e.relatedTarget && e.relatedTarget.classList.contains("save-edits");
+
         setTimeout(() => {
             if (!document.body.contains(oldCell)) { return; }
 
@@ -196,7 +197,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 oldCell.textContent = "[Empty]";
             }
             // if no changes were saved, then revert back to original when focused out
-            else if (!wasEdited && oldCell) {
+            else if (!wasEdited && !isClickingSave && oldCell && oldCell.textContent !== oldOgValue) {
                 oldCell.textContent = oldOgValue;
             }
             // reformat dates
@@ -231,6 +232,7 @@ document.addEventListener("DOMContentLoaded", function() {
             removeButtonsRow();
         }
         if (e.key === "Enter" && currentEditingCell) {
+            edited = true;
             const newValue = currentEditingCell.textContent;
             // check if the value changed at all
             if (newValue !== ogValue && editable) {
@@ -259,10 +261,8 @@ document.addEventListener("DOMContentLoaded", function() {
                 } else {
                     pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
                 }
-                
                 // if the tag was required but still edited, mark as potentially invalidated
                 markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
-                edited = true;
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
@@ -275,6 +275,7 @@ document.addEventListener("DOMContentLoaded", function() {
     // listen to button presses (save/cancel/remove row, save dicoms)
     document.addEventListener("click", function(e) {
         if (e.target.classList.contains("save-edits")) {
+            edited = true;
             const newValue = currentEditingCell.textContent;
             // check if the value changed at all
             if (newValue !== ogValue && editable) {
@@ -305,7 +306,6 @@ document.addEventListener("DOMContentLoaded", function() {
                 }
                 // if the tag was required but still edited, mark as potentially invalidated
                 markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
-                edited = true;
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
