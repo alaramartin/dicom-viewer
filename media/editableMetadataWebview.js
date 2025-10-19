@@ -96,6 +96,15 @@ document.addEventListener("DOMContentLoaded", function() {
             (when out of focus, remove this row)
     */
 
+    // all sequence elemenst should be initialized collapsed
+    document.querySelectorAll(".sequence-header").forEach(header => {
+        header.classList.add("sequence-collapsed");
+        const toggle = header.querySelector(".sequence-toggle");
+        if (toggle) {
+            toggle.textContent = "▶";
+        }
+    });
+
     // note: an empty cell displays as [Empty] in the UI. when focusin, change the contents to just empty for editing
     // when editable cell is in focus
     document.addEventListener("focusin", function(e) {
@@ -127,7 +136,11 @@ document.addEventListener("DOMContentLoaded", function() {
     // when cell goes out of focus, remove the editing buttons row
     document.addEventListener("focusout", function(e) {
         const oldCell = currentEditingCell;
-        const oldOgValue = oldCell.textContent;
+        if (!oldCell) {
+            return;
+        }
+
+        const oldOgValue = ogValue;;
         const wasEdited = edited; // capture the edited state at the time of focusout
         setTimeout(() => {
             if (!document.body.contains(oldCell)) { return; }
@@ -194,6 +207,7 @@ document.addEventListener("DOMContentLoaded", function() {
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
             }
+            removeButtonsRow();
             currentEditingCell.blur();
         }
     });
@@ -223,6 +237,7 @@ document.addEventListener("DOMContentLoaded", function() {
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
             }
+            removeButtonsRow();
             currentEditingCell.blur();
         }
         // check for "remove row" button
@@ -239,6 +254,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 currentEditingCell.textContent = ogValue;
             }
             // remove focus from the cell
+            removeButtonsRow();
             currentEditingCell.blur();
         }
         // check for cancel button which just cancels the change
@@ -272,6 +288,33 @@ document.addEventListener("DOMContentLoaded", function() {
                     command: "reload"
                 });
                 resetChanges();
+            }
+        }
+
+        if (e.target.classList.contains("sequence-toggle")) {
+            const sequenceTag = e.target.dataset.target;
+            const sequenceRow = e.target.closest("tr");
+            const childRows = document.querySelectorAll(`tr[data-parent="${sequenceTag}"]`);
+
+            const isExpanded = sequenceRow.classList.contains("sequence-expanded");
+            if (isExpanded) {
+                // collapse the sequence
+                childRows.forEach(row => {
+                    row.classList.add("hidden");
+                    row.classList.remove("visible");
+                });
+                sequenceRow.classList.remove("sequence-expanded");
+                sequenceRow.classList.add("sequence-collapsed");
+                e.target.textContent = "▶";
+            } else {
+                // expand
+                childRows.forEach(row => {
+                    row.classList.remove("hidden");
+                    row.classList.add("visible");
+                });
+                sequenceRow.classList.remove("sequence-collapsed");
+                sequenceRow.classList.add("sequence-expanded");
+                e.target.textContent = "▼";
             }
         }
     });

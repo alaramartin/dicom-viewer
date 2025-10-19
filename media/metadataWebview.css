@@ -1,5 +1,5 @@
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
     margin: 10px;
     background-color: var(--vscode-editor-background);
     color: var(--vscode-editor-foreground);
@@ -13,7 +13,8 @@ table {
     width: 100%;
     font-size: 12px;
 }
-th, td {
+th,
+td {
     border: 1px solid var(--vscode-panel-border);
     padding: 8px;
     text-align: left;
@@ -35,34 +36,34 @@ td {
     max-width: 200px;
 }
 .editable-cell:focus {
-    outline: 2px solid #007ACC;
+    outline: 2px solid #007acc;
     outline-offset: -1px;
     background-color: var(--vscode-input-background);
 }
-.tooltip {  
-    position: relative;  
+.tooltip {
+    position: relative;
     display: inline-block;
-}  
+}
 
-.tooltip .tooltiptext {  
-    visibility: hidden;  
-    width: 200px;  
-    background-color: #333;  
-    color: #fff;  
-    text-align: center;  
-    border-radius: 6px;  
-    padding: 5px;  
-    position: absolute;  
-    z-index: 1000;  
-    bottom: 125%;  
-    left: 50%;  
+.tooltip .tooltiptext {
+    visibility: hidden;
+    width: 200px;
+    background-color: #333;
+    color: #fff;
+    text-align: center;
+    border-radius: 6px;
+    padding: 5px;
+    position: absolute;
+    z-index: 1000;
+    bottom: 125%;
+    left: 50%;
     margin-left: -100px;
     font-size: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-}  
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
 
-.tooltip:hover .tooltiptext {  
-    visibility: visible;  
+.tooltip:hover .tooltiptext {
+    visibility: visible;
 }
 
 .tooltip .tooltiptext::after {
@@ -90,7 +91,7 @@ td {
     backdrop-filter: blur(4px);
 }
 .dicom-action-btn {
-    background: #007ACC;
+    background: #007acc;
     color: white;
     border: none;
     padding: 6px 14px;
@@ -98,10 +99,10 @@ td {
     border-radius: 3px;
     cursor: pointer;
     font-size: 13px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 .dicom-action-btn.discard {
-    background: #E74C3C;
+    background: #e74c3c;
 }
 .dicom-action-btn.replace {
     background: #666;
@@ -124,7 +125,7 @@ td {
     left: 50%;
     margin-left: -110px;
     font-size: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 #dicom-actions .tooltip:hover .tooltiptext {
     visibility: visible;
@@ -139,7 +140,7 @@ td {
     border-style: solid;
     border-color: #333 transparent transparent transparent;
 }
-/* Add to metadataWebview.css */
+
 .dicom-action-btn.has-tooltip {
     position: relative;
 }
@@ -158,7 +159,7 @@ td {
     left: 50%;
     margin-left: -110px;
     font-size: 12px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     white-space: nowrap;
 }
 
@@ -175,4 +176,47 @@ td {
     border-width: 5px;
     border-style: solid;
     border-color: #d73a49 transparent transparent transparent;
+}
+
+.sequence-header {
+    background-color: #3a3a3a;
+}
+
+.sequence-header td {
+    border-bottom: 2px solid #555;
+}
+
+.sequence-toggle {
+    background: none;
+    border: none;
+    color: #ffffff;
+    cursor: pointer;
+    font-size: 12px;
+    margin-right: 5px;
+    border-radius: 50%;
+    padding: 3px 5px;
+}
+
+.sequence-toggle:hover {
+    background-color: #555;
+}
+
+.sequence-item-header {
+    background-color: #2a2a2a;
+}
+
+.sequence-element {
+    background-color: #252525;
+}
+
+.sequence-child {
+    border-left: 2px solid #007acc;
+}
+
+.sequence-child.hidden {
+    display: none !important;
+}
+
+.sequence-child.visible {
+    display: table-row !important;
 }

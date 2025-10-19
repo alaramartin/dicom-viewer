@@ -261,7 +261,7 @@ function processSequence(tag: string, tagInfo: any, element: any, dictionary: an
     const metadata: Array<any> = [];
 
     // add the sequence header row to the table
-    const headerRow = [tag, tagInfo.tagName, tagInfo.finalVr, `[Sequence - ${element.items.length} items]`, 'sequence-header'];
+    const headerRow = [tag, tagInfo.tagName, tagInfo.finalVr, `[Sequence - ${element.items.length} item(s)]`, 'sequence-header'];
     if (parentTag) {
         headerRow.push(parentTag);
     }
@@ -274,15 +274,14 @@ function processSequence(tag: string, tagInfo: any, element: any, dictionary: an
             `Item #${itemIndex}`,
             'ITEM',
             `Length: ${item.length}${item.hadUndefinedLength ? ' (-1)' : ''}`,
-            'sequence-item-header'
+            'sequence-item-header',
+            tag
         ];
-        if (parentTag) {
-            itemRow.push(parentTag);
-        }
         metadata.push(itemRow);
 
         if (item.dataSet) { 
             const itemMetadata = processDataSet(item.dataSet, dictionary, `${tag}_item_${itemIndex}`);
+            console.log(`Generated ${itemMetadata.length} child elements for item ${itemIndex}`); // Debug log
             metadata.push(...itemMetadata);
         }
     });
@@ -307,7 +306,11 @@ function processDataSet(dataSet: dicomParser.DataSet, dictionary: any, parentTag
                 const value = getTagValue(dataSet, tag, tagInfo.finalVr);
                 const row = [tag, tagInfo.tagName, tagInfo.finalVr, value, rowType];
                 if (parentTag) {
-                    row.push(parentTag);
+                    // Use the root sequence tag instead of the item tag
+                    const rootSequenceTag = parentTag.includes('_item_') 
+                        ? parentTag.split('_item_')[0] 
+                        : parentTag;
+                    row.push(rootSequenceTag);
                 }
                 metadata.push(row);
             }
