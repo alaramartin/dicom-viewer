@@ -85,23 +85,20 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								case "prevent-edit":
 									vscode.window.showInformationMessage("Cannot modify a compressed DICOM.");
 								case "saveAll":
-									for (const [key, value] of Object.entries(message.edits)) {
-										if (typeof value === 'object' && value !== null && 'vr' in value && 'value' in value) {
-											const { vr, value: val } = value as { vr:string, value:any };
-											try {
-												saveDicomEdit(key, vr, val, filepath, message.mode);
-											} catch (e) {
-												vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
-												console.log(e);
-												// reset the webview html and the pending changes
-												resetMetadataPanel();
-												break;
-											}
+									for (const [_, editData] of Object.entries(message.edits)) {
+										try {
+											saveDicomEdit(editData, filepath, message.mode);
+										} catch (e) {
+											vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
+											console.log(e);
+											// reset the webview html and the pending changes
+											resetMetadataPanel();
+											break;
 										}
 									}
-									for (const tag of message.removals) {
+									for (const removeData of message.removals) {
 										try {
-											removeDicomTag(tag, filepath, "new");
+											removeDicomTag(removeData, filepath, message.mode);
 										} catch (e) {
 											vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
 											console.log(e);
@@ -247,17 +244,53 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					});
 					tableRows += '</tr></thead><tbody>';
 				} else {
-					// data rows
-					tableRows += '<tr>';
-					row.forEach((cell: any, cellIndex: number) => {
-						// make the value column editable
-						if (cellIndex === 3) {
-							tableRows += `<td contenteditable="true" class="editable-cell">${cell}</td>`;
+					// handle different row types (sequence/not sequence) differently
+					const rowType = row[4] || 'normal';
+					const parentTag = row[5] || '';
+
+					if (rowType === 'sequence-header') {
+						tableRows += `<tr class="sequence-header" data-sequence-tag="${row[0]}">`;
+						tableRows += `<td><button class="sequence-toggle" data-target="${row[0]}">▼</button> ${row[0]}</td>`;
+						tableRows += `<td>${row[1]}</td>`;
+						tableRows += `<td>${row[2]}</td>`;
+						tableRows += `<td>${row[3]}</td>`;
+						tableRows += `</tr>`;
+					} else if (rowType === 'sequence-item-header') {
+						tableRows += `<tr class="sequence-item-header sequence-child" data-parent="${parentTag}" data-item-tag="${row[0]}" style="display: none;">`;
+						tableRows += `<td style="padding-left: 20px;">${row[1]}</td>`;
+						tableRows += `<td></td>`;
+						tableRows += `<td></td>`;
+						tableRows += `<td></td>`;
+						tableRows += `</tr>`;
+					} else if (rowType === 'sequence-element') {
+						tableRows += `<tr class="sequence-element sequence-child" data-parent="${parentTag}" style="display: none;">`;
+						tableRows += `<td style="padding-left: 40px;">${row[0]}</td>`;
+						tableRows += `<td>${row[1]}</td>`;
+						tableRows += `<td>${row[2]}</td>`;
+						// check if editable
+						if (row[2] !== 'SQ' && !['[Binary Data]', '[Sequence]'].includes(row[3])) {
+							tableRows += `<td contenteditable="true" class="editable-cell">${row[3]}</td>`;
 						} else {
-							tableRows += `<td>${cell}</td>`;
+							tableRows += `<td>${row[3]}</td>`;
 						}
-					});
-					tableRows += '</tr>';
+						tableRows += `</tr>`;
+					} else {
+						// non-sequence
+						tableRows += '<tr>';
+						row.forEach((cell: any, cellIndex: number) => {
+							if (cellIndex > 3) {
+								// skip irrelevant sequence-related tags
+								return;
+							}
+							// make the value column editable
+							if (cellIndex === 3 && row[2] !== 'SQ' && !['[Binary Data]', '[Sequence]'].includes(cell)) {
+								tableRows += `<td contenteditable="true" class="editable-cell">${cell}</td>`;
+							} else {
+								tableRows += `<td>${cell}</td>`;
+							}
+						});
+						tableRows += '</tr>';
+					}
 				}
 			});
 			tableRows += '</tbody>';

@@ -90,11 +90,65 @@ function getVR(cell) {
     return row.cells[2].textContent.trim();
 }
 
+function getSequenceInfo(cell) {
+    const row = cell.closest('tr');
+    const parentAttr = row.getAttribute('data-parent');
+
+    // check if parent is a sequence item, which indicates hat the element is a sequence elemnt
+    if (parentAttr && parentAttr.includes('_item_')) {
+        const parts = parentAttr.match(/^(.+)_item_(\d+)$/);
+        if (parts) {
+            return {
+                isSequenceElement: true,
+                sequenceTag: parts[1],
+                itemIndex: parseInt(parts[2]),
+                elementTag: row.cells[0].textContent.replace(/^x/, '')
+            };
+        }
+    }
+    return { isSequenceElement: false };
+}
+
+function sendSaveMessage(command, mode) {
+    const info = getSequenceInfo(currentEditingCell);
+
+    if (info.isSequenceElement) {
+        vscode.postMessage({
+            command: command,
+            isSequenceElement: true,
+            sequenceTag: info.sequenceTag,
+            itemIndex: info.itemIndex,
+            elementTag: info.elementTag,
+            vr: getVR(currentEditingCell),
+            value: currentEditingCell.textContent,
+            mode: mode
+        });
+    } else {
+        vscode.postMessage({
+            command: command,
+            isSequenceElement: false,
+            tag: currentEditingCell.parentNode.cells[0].textContent,
+            vr: getVR(currentEditingCell),
+            value: currentEditingCell.textContent,
+            mode: mode
+        });
+    }
+}
+
 document.addEventListener("DOMContentLoaded", function() {
     /* listen to when editable-cell is in focus. when in focus, create the extra row below it with the buttons
             save edits (blue), cancel edits (grey), and remove row (red)
             (when out of focus, remove this row)
     */
+
+    // all sequence elemenst should be initialized collapsed
+    document.querySelectorAll(".sequence-header").forEach(header => {
+        header.classList.add("sequence-collapsed");
+        const toggle = header.querySelector(".sequence-toggle");
+        if (toggle) {
+            toggle.textContent = "▶";
+        }
+    });
 
     // note: an empty cell displays as [Empty] in the UI. when focusin, change the contents to just empty for editing
     // when editable cell is in focus
@@ -127,8 +181,14 @@ document.addEventListener("DOMContentLoaded", function() {
     // when cell goes out of focus, remove the editing buttons row
     document.addEventListener("focusout", function(e) {
         const oldCell = currentEditingCell;
-        const oldOgValue = oldCell.textContent;
+        if (!oldCell) {
+            return;
+        }
+
+        const oldOgValue = ogValue;
         const wasEdited = edited; // capture the edited state at the time of focusout
+        const isClickingSave = e.relatedTarget && e.relatedTarget.classList.contains("save-edits");
+
         setTimeout(() => {
             if (!document.body.contains(oldCell)) { return; }
 
@@ -137,7 +197,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 oldCell.textContent = "[Empty]";
             }
             // if no changes were saved, then revert back to original when focused out
-            else if (!wasEdited && oldCell) {
+            else if (!wasEdited && !isClickingSave && oldCell && oldCell.textContent !== oldOgValue) {
                 oldCell.textContent = oldOgValue;
             }
             // reformat dates
@@ -172,12 +232,14 @@ document.addEventListener("DOMContentLoaded", function() {
             removeButtonsRow();
         }
         if (e.key === "Enter" && currentEditingCell) {
+            edited = true;
             const newValue = currentEditingCell.textContent;
             // check if the value changed at all
             if (newValue !== ogValue && editable) {
                 // get the dicom tag of the currenteditingcell (first column)
                 const hexTag = getHexTag(currentEditingCell);
                 const VR = getVR(currentEditingCell);
+                const info = getSequenceInfo(currentEditingCell);
                 
                 // store the raw value for DICOM, not the formatted display value
                 let rawValue = newValue;
@@ -185,15 +247,27 @@ document.addEventListener("DOMContentLoaded", function() {
                     // convert formatted date
                     rawValue = newValue.replace(/\//g, "");
                 }
+
                 // store edit, don't send to extension yet
-                pendingEdits[hexTag] = { vr: VR, value: rawValue };
+                if (info.isSequenceElement) {
+                    pendingEdits[hexTag] = {
+                        vr: VR,
+                        value: rawValue,
+                        isSequenceElement: true,
+                        sequenceTag: info.sequenceTag,
+                        itemIndex: info.itemIndex,
+                        elementTag: info.elementTag
+                    };
+                } else {
+                    pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
+                }
                 // if the tag was required but still edited, mark as potentially invalidated
                 markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
-                edited = true;
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
             }
+            removeButtonsRow();
             currentEditingCell.blur();
         }
     });
@@ -201,12 +275,14 @@ document.addEventListener("DOMContentLoaded", function() {
     // listen to button presses (save/cancel/remove row, save dicoms)
     document.addEventListener("click", function(e) {
         if (e.target.classList.contains("save-edits")) {
+            edited = true;
             const newValue = currentEditingCell.textContent;
             // check if the value changed at all
             if (newValue !== ogValue && editable) {
                 // get the dicom tag of the currenteditingcell (first column)
                 const hexTag = getHexTag(currentEditingCell);
                 const VR = getVR(currentEditingCell);
+                const info = getSequenceInfo(currentEditingCell);
                 
                 // store the raw value for DICOM, not the formatted display value
                 let rawValue = newValue;
@@ -214,15 +290,27 @@ document.addEventListener("DOMContentLoaded", function() {
                     // convert formatted date
                     rawValue = newValue.replace(/\//g, "");
                 }
+
                 // store edit, don't send to extension yet
-                pendingEdits[hexTag] = { vr: VR, value: rawValue };
+                if (info.isSequenceElement) {
+                    pendingEdits[hexTag] = {
+                        vr: VR,
+                        value: rawValue,
+                        isSequenceElement: true,
+                        sequenceTag: info.sequenceTag,
+                        itemIndex: info.itemIndex,
+                        elementTag: info.elementTag
+                    };
+                } else {
+                    pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
+                }
                 // if the tag was required but still edited, mark as potentially invalidated
                 markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
-                edited = true;
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
             }
+            removeButtonsRow();
             currentEditingCell.blur();
         }
         // check for "remove row" button
@@ -230,7 +318,21 @@ document.addEventListener("DOMContentLoaded", function() {
             if (editable) {
                 const row = currentEditingCell.closest('tr');
                 const hexTag = getHexTag(currentEditingCell);
-                pendingRemovals.add(hexTag);
+                const info = getSequenceInfo(currentEditingCell);
+
+                // store deletion
+                if (info.isSequenceElement) {
+                    pendingRemovals.add({
+                        tag: hexTag,
+                        isSequenceElement: true,
+                        sequenceTag: info.sequenceTag,
+                        itemIndex: info.itemIndex,
+                        elementTag: info.elementTag
+                    });
+                } else {
+                    pendingRemovals.add({tag: hexTag, isSequenceElement: false});
+                }
+                
                 // if the tag was required but still removed, mark as potentially invalidated
                 markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 row.remove();
@@ -239,6 +341,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 currentEditingCell.textContent = ogValue;
             }
             // remove focus from the cell
+            removeButtonsRow();
             currentEditingCell.blur();
         }
         // check for cancel button which just cancels the change
@@ -272,6 +375,45 @@ document.addEventListener("DOMContentLoaded", function() {
                     command: "reload"
                 });
                 resetChanges();
+            }
+        }
+
+        if (e.target.classList.contains("sequence-toggle")) {
+            const sequenceTag = e.target.dataset.target;
+            const sequenceRow = e.target.closest("tr");
+            const childRows = document.querySelectorAll(`tr[data-parent="${sequenceTag}"]`);
+            const allDescendants = [];
+
+            // get all sequence elements from the item header
+            childRows.forEach(child => {
+                allDescendants.push(child);
+
+                const childTag = child.getAttribute("data-item-tag");
+                if (childTag) {
+                    const grandChildren = document.querySelectorAll(`tr[data-parent="${childTag}"]`);
+                    grandChildren.forEach(grandChild => allDescendants.push(grandChild));
+                }
+            });
+
+            const isExpanded = sequenceRow.classList.contains("sequence-expanded");
+            if (isExpanded) {
+                // collapse the sequence
+                allDescendants.forEach(row => {
+                    row.classList.add("hidden");
+                    row.classList.remove("visible");
+                });
+                sequenceRow.classList.remove("sequence-expanded");
+                sequenceRow.classList.add("sequence-collapsed");
+                e.target.textContent = "▶";
+            } else {
+                // expand
+                allDescendants.forEach(row => {
+                    row.classList.remove("hidden");
+                    row.classList.add("visible");
+                });
+                sequenceRow.classList.remove("sequence-collapsed");
+                sequenceRow.classList.add("sequence-expanded");
+                e.target.textContent = "▼";
             }
         }
     });

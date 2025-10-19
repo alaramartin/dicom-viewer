@@ -107,6 +107,69 @@ export function convertDicomToBase64(filepath: string): string {
     }
 }
 
+// export function getMetadata(filepath: string): Array<any> {
+//     let metadata = [["Hex Tag", "Tag Name", "VR", "Value"]];
+//     const dictionary = require('@iwharris/dicom-data-dictionary');
+//     try {
+//         const dicomFile = fs.readFileSync(filepath);
+//         const dataSet = dicomParser.parseDicom(dicomFile);
+
+//         for (const tag in dataSet.elements) {
+//             if (dataSet.elements.hasOwnProperty(tag)) {
+//                 // get the info of the tag itself
+//                 let tagName = 'Unknown';
+//                 let vr = 'UN';
+//                 let cleanTag = tag.replace('x', '').toUpperCase();
+//                 const element = dataSet.elements[tag];
+
+//                 try {
+//                     const elem = dictionary.get_element(cleanTag);
+//                     tagName = elem["name"];
+//                     vr = elem["vr"];
+//                 }
+//                 catch {
+//                     // ignore the error, it's just iwharris not finding the vr
+//                 }
+                
+//                 // use the VR from the element if available, otherwise use our lookup
+//                 let finalVr = element.vr || vr;
+//                 finalVr = normalizeVR(finalVr);
+                
+//                 let value = '';
+
+//                 // handle different vr types
+//                 if (element.items && finalVr === 'SQ') {
+//                     // add the sequence header row to the table
+//                     metadata.push([tag, tagName, finalVr, `[Sequence - ${element.items.length} items]`, 'sequence-header']);
+
+//                     // handle every item in the sequence
+//                     element.items.forEach((item: any, itemIndex: number) => {
+//                         metadata.push([
+//                             `${tag}_item_${itemIndex}`,
+//                             `Item #${itemIndex}`,
+//                             `Length: ${item.length}$item.hadUndefinedLength ? ' (-1)' : ''`,
+//                             'sequence-item-header',
+//                             tag
+//                         ]);
+
+//                         if (item.dataSet) { 
+//                             const itemMetadata = processElement(item.dataSet, dictionary, `${tag}_item_${itemIndex}`);
+//                             metadata = metadata.concat(itemMetadata);
+//                         }
+//                     });
+//                     continue;
+//                 } else {
+//                     value = getTagValue(dataSet, tag, finalVr);
+//                 }
+//                 metadata.push([tag, tagName, finalVr, value]);
+//             }
+//         }
+//     } catch (ex) {
+//         console.error('Error parsing DICOM', ex);
+//     }
+//     return metadata;
+// }
+
 export function getMetadata(filepath: string): Array<any> {
     let metadata = [["Hex Tag", "Tag Name", "VR", "Value"]];
     const dictionary = require('@iwharris/dicom-data-dictionary');
@@ -114,61 +177,52 @@ export function getMetadata(filepath: string): Array<any> {
         const dicomFile = fs.readFileSync(filepath);
         const dataSet = dicomParser.parseDicom(dicomFile);
 
-        for (const tag in dataSet.elements) {
-            if (dataSet.elements.hasOwnProperty(tag)) {
-                // get the info of the tag itself
-                let tagName = 'Unknown';
-                let vr = 'UN';
-                let cleanTag = tag.replace('x', '').toUpperCase();
-                const element = dataSet.elements[tag];
-
-                try {
-                    const elem = dictionary.get_element(cleanTag);
-                    tagName = elem["name"];
-                    vr = elem["vr"];
-                }
-                catch {
-                    // ignore the error, it's just iwharris not finding the vr
-                }
-                
-                // use the VR from the element if available, otherwise use our lookup
-                let finalVr = element.vr || vr;
-                finalVr = normalizeVR(finalVr);
-                
-                let value = '';
-                
-                // handle different vr types
-                if (finalVr === 'SQ') {
-                    value = '[Sequence]';
-                    // fixme: make SQ a dropdown/collapsible sequence element with each element within
-                } else if (finalVr === 'OB' || finalVr === 'OW' || finalVr === 'OF' || finalVr === 'OD') {
-                    value = '[Binary Data]';
-                } else if (finalVr === 'DA') {
-                    // if the VR is a date, make it more readable format (YYYY/MM/DD)
-                    const dateStr = dataSet.string(tag);
-                    if (dateStr && dateStr.length === 8) {
-                        // DICOM DA format is YYYYMMDD
-                        value = `${dateStr.slice(0, 4)}/${dateStr.slice(4, 6)}/${dateStr.slice(6, 8)}`;
-                    } else if (dateStr) {
-                        value = dateStr;
-                    } else {
-                        value = '[Empty]';
-                    }
-                } else {
-                    // get string representation for text/numeric VRs
-                    try {
-                        value = dataSet.string(tag) || '[Empty]';
-                    } catch (e) {
-                        value = '[Cannot display]';
-                    }
-                }
-                metadata.push([tag, tagName, finalVr, value]);
-            }
-        }
+        const processedMetadata = processDataSet(dataSet, dictionary);
+        metadata = metadata.concat(processedMetadata);
     } catch (ex) {
         console.error('Error parsing DICOM', ex);
     }
     return metadata;
+}
+
+function getTagInfo(tag: string, element: any, dictionary: any) {
+    // get the info of the tag itself
+    let tagName = 'Unknown';
+    let vr = 'UN';
+    let cleanTag = tag.replace('x', '').toUpperCase();
+
+    try {
+        const elem = dictionary.get_element(cleanTag);
+        tagName = elem["name"];
+        vr = elem["vr"];
+    }
+    catch {
+        // ignore the error, it's just iwharris not finding the vr
+    }
+    
+    // use the VR from the element if available, otherwise use our lookup
+    const finalVr = normalizeVR(element.vr || vr);
+
+    return {tagName, finalVr};
+}
+
+function getTagValue(dataSet: dicomParser.DataSet, tag: string, vr: string): string {
+    if (vr === 'SQ') {
+        return '[Sequence]';
+    } else if (vr === 'OB' || vr === 'OW' || vr === 'OF' || vr === 'OD' || tag.toLowerCase() === 'x7fe00010') {
+        return '[Binary Data]';
+    } else if (vr === 'DA') {
+        // if the VR is a date, make it more readable format (YYYY/MM/DD)
+        const dateStr = dataSet.string(tag);
+        return formatDate(dateStr);
+    } else {
+        // get string representation for text/numeric VRs
+        try {
+            return dataSet.string(tag) || '[Empty]';
+        } catch (e) {
+            return '[Cannot display]';
+        }
+    }
 }
 
 // fixes invalid VRs
@@ -191,4 +245,72 @@ function normalizeVR(vr:string) {
     else {
         return vr;
     }
+}
+
+function formatDate(dateStr?: string): string {
+    if (dateStr && dateStr.length === 8) {
+        // DICOM DA format is YYYYMMDD
+        return `${dateStr.slice(0, 4)}/${dateStr.slice(4, 6)}/${dateStr.slice(6, 8)}`;
+    } else if (dateStr) {
+        return dateStr;
+    } else {
+        return '[Empty]';
+    }
+}
+function processSequence(tag: string, tagInfo: any, element: any, dictionary: any, parentTag?: string): Array<any> {
+    const metadata: Array<any> = [];
+
+    // add the sequence header row to the table
+    const headerRow = [tag, tagInfo.tagName, tagInfo.finalVr, `[Sequence - ${element.items.length} item(s)]`, 'sequence-header'];
+    if (parentTag) {
+        headerRow.push(parentTag);
+    }
+    metadata.push(headerRow);
+
+    // handle every item in the sequence
+    element.items.forEach((item: any, itemIndex: number) => {
+        const itemRow = [
+            `${tag}_item_${itemIndex}`,
+            `Item #${itemIndex}`,
+            'ITEM',
+            `Length: ${item.length}${item.hadUndefinedLength ? ' (-1)' : ''}`,
+            'sequence-item-header',
+            tag
+        ];
+        metadata.push(itemRow);
+
+        if (item.dataSet) { 
+            const itemMetadata = processDataSet(item.dataSet, dictionary, `${tag}_item_${itemIndex}`);
+            console.log(`Generated ${itemMetadata.length} child elements for item ${itemIndex}`); // Debug log
+            metadata.push(...itemMetadata);
+        }
+    });
+
+    return metadata;
+}
+
+// recursively handle an element dataset
+function processDataSet(dataSet: dicomParser.DataSet, dictionary: any, parentTag?: string): Array<any> {
+    const metadata: Array<any> = [];
+    
+    for (const tag in dataSet.elements) {
+        if (dataSet.elements.hasOwnProperty(tag)) {
+            const element = dataSet.elements[tag];
+
+            const tagInfo = getTagInfo(tag, element, dictionary);
+            const rowType = parentTag ? 'sequence-element' : 'normal';
+
+            if (element.items && tagInfo.finalVr === 'SQ') {
+                metadata.push(...processSequence(tag, tagInfo, element, dictionary, parentTag));
+            } else {
+                const value = getTagValue(dataSet, tag, tagInfo.finalVr);
+                const row = [tag, tagInfo.tagName, tagInfo.finalVr, value, rowType];
+                if (parentTag) {
+                    row.push(parentTag);
+                }
+                metadata.push(row);
+            }
+        }
+    }
+    return metadata;
 }
