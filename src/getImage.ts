@@ -306,11 +306,7 @@ function processDataSet(dataSet: dicomParser.DataSet, dictionary: any, parentTag
                 const value = getTagValue(dataSet, tag, tagInfo.finalVr);
                 const row = [tag, tagInfo.tagName, tagInfo.finalVr, value, rowType];
                 if (parentTag) {
-                    // Use the root sequence tag instead of the item tag
-                    const rootSequenceTag = parentTag.includes('_item_') 
-                        ? parentTag.split('_item_')[0] 
-                        : parentTag;
-                    row.push(rootSequenceTag);
+                    row.push(parentTag);
                 }
                 metadata.push(row);
             }

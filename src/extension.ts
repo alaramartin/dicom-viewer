@@ -85,23 +85,20 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 								case "prevent-edit":
 									vscode.window.showInformationMessage("Cannot modify a compressed DICOM.");
 								case "saveAll":
-									for (const [key, value] of Object.entries(message.edits)) {
-										if (typeof value === 'object' && value !== null && 'vr' in value && 'value' in value) {
-											const { vr, value: val } = value as { vr:string, value:any };
-											try {
-												saveDicomEdit(key, vr, val, filepath, message.mode);
-											} catch (e) {
-												vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
-												console.log(e);
-												// reset the webview html and the pending changes
-												resetMetadataPanel();
-												break;
-											}
+									for (const editData of Object.entries(message.edits)) {
+										try {
+											saveDicomEdit(editData, filepath, message.mode);
+										} catch (e) {
+											vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
+											console.log(e);
+											// reset the webview html and the pending changes
+											resetMetadataPanel();
+											break;
 										}
 									}
-									for (const tag of message.removals) {
+									for (const removeData of message.removals) {
 										try {
-											removeDicomTag(tag, filepath, message.mode);
+											removeDicomTag(removeData, filepath, message.mode);
 										} catch (e) {
 											vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
 											console.log(e);
@@ -259,7 +256,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 						tableRows += `<td>${row[3]}</td>`;
 						tableRows += `</tr>`;
 					} else if (rowType === 'sequence-item-header') {
-						tableRows += `<tr class="sequence-item-header sequence-child" data-parent="${parentTag}" style="display: none;">`;
+						tableRows += `<tr class="sequence-item-header sequence-child" data-parent="${parentTag}" data-item-tag="${row[0]}" style="display: none;">`;
 						tableRows += `<td style="padding-left: 20px;">${row[1]}</td>`;
 						tableRows += `<td></td>`;
 						tableRows += `<td></td>`;
