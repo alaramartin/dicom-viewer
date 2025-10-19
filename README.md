@@ -38,6 +38,6 @@ This extension is released under the MIT License. See the LICENSE file for more 
 
 ## For Athena Award: Reflection
 
-Note: if you need some DICOMs to test this extension on, (dicomlibrary.com)[https://www.dicomlibrary.com/] has some sample DICOMs ;)
+Note: if you need some DICOMs to test this extension on, [dicomlibrary.com](https://www.dicomlibrary.com/) has some sample DICOMs ;)
 
 I made this extension after my summer internship at a medical lab, where I was working with DICOM format images all day. VS Code doesn't support viewing DICOM images, so I had to rely on external tools to view and edit, which was a hassle and also a security risk for confidential patient info. I decided to make this extension to make my own work easier, and published it so that others who work in this field can have this tool to make their work easier too. A huge hurdle for me was that `pydicom`, a DICOM library in Python, is really comprehensive and easy to use, but would make this extension more difficult for users to download: they would have to also install the Python requirements. I wanted this extension to be super easy for anyone to just download and use immediately, so I had to find JS libraries for DICOM actions, but all of the JS DICOM libraries have very minimal documentation (or just none). Working with these new, undocumented libraries was the biggest challenge because I almost never knew was I was doing and spent hours on debugging methods I barely knew anything about. But to me, the end result is super cool and super useful :)
