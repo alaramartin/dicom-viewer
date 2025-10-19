@@ -36,10 +36,8 @@ export function removeDicomTag(removeData: any, filepath: string, mode: string) 
     dicomDict.dict = originalDicomData.dict;
 
     if (removeData.isSequenceElement) {
-        console.log("sequence element being removed");
         removeSequenceElement(dicomDict, removeData.sequenceTag, removeData.itemIndex, removeData.elementTag);
     } else {
-        console.log("NOT sequence element being removed", removeData.sequenceTag);
         const tag = removeData.tag.replace(/^x/, "");
         // check if the tag exists (it should) and delete
         if (dicomDict.dict[tag]) {
@@ -75,8 +73,6 @@ function updateSequenceElement(dicomDict: any, sequenceTag: string, itemIndex: n
         vr: vr,
         Value: [String(newValue)]
     };
-
-    console.log(`Updated sequence element ${sequenceTag}[${itemIndex}].${elementTag} = "${newValue}"`);
 }
 
 function removeSequenceElement(dicomDict: any, sequenceTag: string, itemIndex: number, elementTag: string) {

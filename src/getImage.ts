@@ -281,7 +281,6 @@ function processSequence(tag: string, tagInfo: any, element: any, dictionary: an
 
         if (item.dataSet) { 
             const itemMetadata = processDataSet(item.dataSet, dictionary, `${tag}_item_${itemIndex}`);
-            console.log(`Generated ${itemMetadata.length} child elements for item ${itemIndex}`); // Debug log
             metadata.push(...itemMetadata);
         }
     });
