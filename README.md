@@ -2,6 +2,8 @@
 
 View and edit DICOM (.dcm) files directly in VS Code. View both the image and associated metadata side-by-side. Edit metadata and save edited DICOMs in the side panel.
 
+Available on [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=alarm.dicom-viewer) and [OpenVSX](https://open-vsx.org/extension/alarm/dicom-viewer).
+
 ## Features
 
 - **Viewer**: Display DICOM images as well as file metadata including tags, value representations (VRs), and attribute values
