@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { convertDicomToBase64, getMetadata } from './getImage';
-import { saveDicomEdit, removeDicomTag } from './editDicom';
+import { saveDicomEdits } from './editDicom';
 
 class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.CustomDocument> {
 	public static register(context: vscode.ExtensionContext): vscode.Disposable {
@@ -79,32 +79,26 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							vscode.window.showInformationMessage("Cannot modify a compressed DICOM.");
 						}
 						else {
-							// update the dicom according to accumulated saves and removals 
+							// update the dicom according to accumulated saves and removals
 							switch (message.command) {
 								// should be caught by the above conditional but just in case
 								case "prevent-edit":
 									vscode.window.showInformationMessage("Cannot modify a compressed DICOM.");
-								case "saveAll":
-									for (const [_, editData] of Object.entries(message.edits)) {
-										try {
-											saveDicomEdit(editData, filepath, message.mode);
-										} catch (e) {
-											vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
+									break;
+								case "saveAll": {
+									// read the file once, apply every pending edit and removal to a
+									// single dicomDict, and write once — applying them one at a time
+									// (each doing its own read+write) meant every iteration after the
+									// first clobbered the previous one's output.
+									const edits = Object.values(message.edits);
+									const { editErrors, removalErrors } = saveDicomEdits(edits, message.removals, filepath, message.mode);
+									if (editErrors.length > 0 || removalErrors.length > 0) {
+										vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
+										for (const e of [...editErrors, ...removalErrors]) {
 											console.log(e);
-											// reset the webview html and the pending changes
-											resetMetadataPanel();
-											break;
 										}
-									}
-									for (const removeData of message.removals) {
-										try {
-											removeDicomTag(removeData, filepath, message.mode);
-										} catch (e) {
-											vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
-											console.log(e);
-											// reset the webview html and the pending changes
-											resetMetadataPanel();
-										}
+										// reset the webview html and the pending changes
+										resetMetadataPanel();
 									}
 									if (message.mode === "new") {
 										// reset the original
@@ -118,6 +112,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 										}
 									}
 									break;
+								}
 								case "reload":
 									resetMetadataPanel();
 									break;
