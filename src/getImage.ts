@@ -1,6 +1,7 @@
 import * as dicomParser from 'dicom-parser';
 import * as fs from 'fs';
 import { PNG } from 'pngjs';
+import { getLogger, describeError } from './logger';
 
 export function convertDicomToBase64(filepath: string): string {
     try {
@@ -101,9 +102,12 @@ export function convertDicomToBase64(filepath: string): string {
         const buffer = PNG.sync.write(png);
         return 'data:image/png;base64,' + buffer.toString('base64');
         
-    } catch (error: any) {
-        console.error('DICOM conversion error:', error);
-        throw new Error(`Failed to convert DICOM: ${error.message}`);
+    } catch (error: unknown) {
+        // never log the error object itself — dicom-parser errors can embed tag values.
+        // dicom-parser sometimes throws plain strings rather than Error objects.
+        const { type, message } = describeError(error);
+        getLogger().error(`DICOM image conversion failed (${type})`);
+        throw new Error(`Failed to convert DICOM: ${message}`);
     }
 }
 
@@ -179,8 +183,9 @@ export function getMetadata(filepath: string): Array<any> {
 
         const processedMetadata = processDataSet(dataSet, dictionary);
         metadata = metadata.concat(processedMetadata);
-    } catch (ex) {
-        console.error('Error parsing DICOM', ex);
+    } catch (ex: unknown) {
+        // never log the error object itself — dicom-parser errors can embed tag values
+        getLogger().error(`DICOM metadata parse failed (${describeError(ex).type})`);
     }
     return metadata;
 }

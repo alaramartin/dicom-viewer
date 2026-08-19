@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { convertDicomToBase64, getMetadata } from './getImage';
 import { saveDicomEdits } from './editDicom';
+import { getLogger, describeError } from './logger';
 
 // escape a value for safe interpolation into HTML text/attribute content.
 // DICOM tag values come from the file itself and are not trustworthy input.
@@ -50,7 +51,15 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
 			};
 			// get the image in base64 and display in webview
-			const base64Image = convertDicomToBase64(filepath);
+			let base64Image: string;
+			try {
+				base64Image = convertDicomToBase64(filepath);
+			} catch (e) {
+				// convertDicomToBase64 already logged the error type; an uncaught
+				// throw here rejects resolveCustomEditor's promise and crashes the
+				// editor tab, so fall through to the "something went wrong" page.
+				base64Image = "";
+			}
 			if (base64Image === "compressed") {
 				imagePanel.webview.html = this.getCompressedImageFailedContent(imagePanel.webview);
 				isCompressed = true;
@@ -117,9 +126,10 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									const edits = Object.values(message.edits);
 									const { editErrors, removalErrors } = saveDicomEdits(edits, message.removals, filepath, message.mode);
 									if (editErrors.length > 0 || removalErrors.length > 0) {
-										vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View console for more detailed error log.");
+										vscode.window.showInformationMessage("There is something preventing DICOM from saving (may be invalid). View the \"DICOM Viewer\" output channel for more detail.");
 										for (const e of [...editErrors, ...removalErrors]) {
-											console.log(e);
+											// never log the error object itself — it can embed tag values
+											getLogger().error(`DICOM save failed (${describeError(e).type})`);
 										}
 										// reset the webview html and the pending changes
 										resetMetadataPanel();
