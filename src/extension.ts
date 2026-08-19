@@ -2,6 +2,26 @@ import * as vscode from 'vscode';
 import { convertDicomToBase64, getMetadata } from './getImage';
 import { saveDicomEdits } from './editDicom';
 
+// escape a value for safe interpolation into HTML text/attribute content.
+// DICOM tag values come from the file itself and are not trustworthy input.
+function escapeHtml(value: unknown): string {
+	return String(value)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;')
+		.replace(/"/g, '&quot;')
+		.replace(/'/g, '&#39;');
+}
+
+function getNonce(): string {
+	const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+	let nonce = '';
+	for (let i = 0; i < 32; i++) {
+		nonce += chars.charAt(Math.floor(Math.random() * chars.length));
+	}
+	return nonce;
+}
+
 class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.CustomDocument> {
 	public static register(context: vscode.ExtensionContext): vscode.Disposable {
 		const provider = new DICOMEditorProvider(context);
@@ -27,15 +47,16 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		if (filepath.includes(".dcm")) {
 			imagePanel.webview.options = {
 				enableScripts: true,
+				localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
 			};
 			// get the image in base64 and display in webview
 			const base64Image = convertDicomToBase64(filepath);
 			if (base64Image === "compressed") {
-				imagePanel.webview.html = this.getCompressedImageFailedContent();
+				imagePanel.webview.html = this.getCompressedImageFailedContent(imagePanel.webview);
 				isCompressed = true;
 			}
 			else {
-				imagePanel.webview.html = this.getImageWebviewContent(base64Image);
+				imagePanel.webview.html = this.getImageWebviewContent(imagePanel.webview, base64Image);
 			}
 			
         	let metadataPanel: vscode.WebviewPanel | undefined;
@@ -50,7 +71,10 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					{	viewColumn: vscode.ViewColumn.Beside,
 						preserveFocus: true
 					},
-					{ enableScripts: true }
+					{
+						enableScripts: true,
+						localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')],
+					}
 				);
 
 				const cssUri = metadataPanel.webview.asWebviewUri(
@@ -68,7 +92,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					);
 				}
 				// always initialize with original metadata
-				metadataPanel.webview.html = this.getMetadataWebviewContent(metadata, cssUri, scriptUri);
+				metadataPanel.webview.html = this.getMetadataWebviewContent(metadataPanel.webview, metadata, cssUri, scriptUri);
 				
 
 				// handle messages from the webview
@@ -108,7 +132,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 										const updatedMetadata = getMetadata(filepath);
 										metadata = updatedMetadata;
 										if (metadataPanel) {
-											metadataPanel.webview.html = this.getMetadataWebviewContent(metadata, cssUri, scriptUri);
+											metadataPanel.webview.html = this.getMetadataWebviewContent(metadataPanel.webview, metadata, cssUri, scriptUri);
 										}
 									}
 									break;
@@ -169,11 +193,13 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		return { uri, dispose: () => {} };
 	}
 
-	getCompressedImageFailedContent() {
+	getCompressedImageFailedContent(webview: vscode.Webview) {
+		const csp = `default-src 'none'; style-src 'unsafe-inline';`;
 		return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
 				<meta charset="UTF-8">
+				<meta http-equiv="Content-Security-Policy" content="${csp}">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<title>DICOM Image</title>
 			</head>
@@ -183,17 +209,19 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			</html>`;
 	}
 
-	getImageWebviewContent(base64Image:string) {
+	getImageWebviewContent(webview: vscode.Webview, base64Image:string) {
+		const csp = `default-src 'none'; img-src data:; style-src 'unsafe-inline';`;
 		if (base64Image) {
 			return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
 				<meta charset="UTF-8">
+				<meta http-equiv="Content-Security-Policy" content="${csp}">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<title>DICOM Image</title>
 			</head>
 			<body>
-				<img src="${base64Image}" width="80%" style="border: 1px solid #ccc;" />
+				<img src="${escapeHtml(base64Image)}" width="80%" style="border: 1px solid #ccc;" />
 			</body>
 			</html>`;
 		}
@@ -202,6 +230,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			<html lang="en">
 			<head>
 				<meta charset="UTF-8">
+				<meta http-equiv="Content-Security-Policy" content="${csp}">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<title>DICOM Image</title>
 			</head>
@@ -212,12 +241,14 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		}
 	}
 
-	getMetadataWebviewContent(metadata: Array<any>, cssUri:vscode.Uri, scriptUri:vscode.Uri) {
+	getMetadataWebviewContent(webview: vscode.Webview, metadata: Array<any>, cssUri:vscode.Uri, scriptUri:vscode.Uri) {
 		if (metadata.length === 1) {
+			const csp = `default-src 'none'; style-src 'unsafe-inline';`;
 			return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
 				<meta charset="UTF-8">
+				<meta http-equiv="Content-Security-Policy" content="${csp}">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<title>DICOM Metadata</title>
 			</head>
@@ -229,13 +260,13 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 		else {
 			// convert 2D array to HTML table
 			let tableRows = '';
-			
+
 			metadata.forEach((row, index) => {
 				if (index === 0) {
 					// header row
 					tableRows += '<thead><tr>';
 					row.forEach((cell: any) => {
-						tableRows += `<th>${cell}</th>`;
+						tableRows += `<th>${escapeHtml(cell)}</th>`;
 					});
 					tableRows += '</tr></thead><tbody>';
 				} else {
@@ -244,29 +275,29 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					const parentTag = row[5] || '';
 
 					if (rowType === 'sequence-header') {
-						tableRows += `<tr class="sequence-header" data-sequence-tag="${row[0]}">`;
-						tableRows += `<td><button class="sequence-toggle" data-target="${row[0]}">▼</button> ${row[0]}</td>`;
-						tableRows += `<td>${row[1]}</td>`;
-						tableRows += `<td>${row[2]}</td>`;
-						tableRows += `<td>${row[3]}</td>`;
+						tableRows += `<tr class="sequence-header" data-sequence-tag="${escapeHtml(row[0])}">`;
+						tableRows += `<td><button class="sequence-toggle" data-target="${escapeHtml(row[0])}">▼</button> ${escapeHtml(row[0])}</td>`;
+						tableRows += `<td>${escapeHtml(row[1])}</td>`;
+						tableRows += `<td>${escapeHtml(row[2])}</td>`;
+						tableRows += `<td>${escapeHtml(row[3])}</td>`;
 						tableRows += `</tr>`;
 					} else if (rowType === 'sequence-item-header') {
-						tableRows += `<tr class="sequence-item-header sequence-child" data-parent="${parentTag}" data-item-tag="${row[0]}" style="display: none;">`;
-						tableRows += `<td style="padding-left: 20px;">${row[1]}</td>`;
+						tableRows += `<tr class="sequence-item-header sequence-child" data-parent="${escapeHtml(parentTag)}" data-item-tag="${escapeHtml(row[0])}" style="display: none;">`;
+						tableRows += `<td style="padding-left: 20px;">${escapeHtml(row[1])}</td>`;
 						tableRows += `<td></td>`;
 						tableRows += `<td></td>`;
 						tableRows += `<td></td>`;
 						tableRows += `</tr>`;
 					} else if (rowType === 'sequence-element') {
-						tableRows += `<tr class="sequence-element sequence-child" data-parent="${parentTag}" style="display: none;">`;
-						tableRows += `<td style="padding-left: 40px;">${row[0]}</td>`;
-						tableRows += `<td>${row[1]}</td>`;
-						tableRows += `<td>${row[2]}</td>`;
+						tableRows += `<tr class="sequence-element sequence-child" data-parent="${escapeHtml(parentTag)}" style="display: none;">`;
+						tableRows += `<td style="padding-left: 40px;">${escapeHtml(row[0])}</td>`;
+						tableRows += `<td>${escapeHtml(row[1])}</td>`;
+						tableRows += `<td>${escapeHtml(row[2])}</td>`;
 						// check if editable
 						if (row[2] !== 'SQ' && !['[Binary Data]', '[Sequence]'].includes(row[3])) {
-							tableRows += `<td contenteditable="true" class="editable-cell">${row[3]}</td>`;
+							tableRows += `<td contenteditable="true" class="editable-cell">${escapeHtml(row[3])}</td>`;
 						} else {
-							tableRows += `<td>${row[3]}</td>`;
+							tableRows += `<td>${escapeHtml(row[3])}</td>`;
 						}
 						tableRows += `</tr>`;
 					} else {
@@ -279,9 +310,9 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 							}
 							// make the value column editable
 							if (cellIndex === 3 && row[2] !== 'SQ' && !['[Binary Data]', '[Sequence]'].includes(cell)) {
-								tableRows += `<td contenteditable="true" class="editable-cell">${cell}</td>`;
+								tableRows += `<td contenteditable="true" class="editable-cell">${escapeHtml(cell)}</td>`;
 							} else {
-								tableRows += `<td>${cell}</td>`;
+								tableRows += `<td>${escapeHtml(cell)}</td>`;
 							}
 						});
 						tableRows += '</tr>';
@@ -290,10 +321,13 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			});
 			tableRows += '</tbody>';
 
+			const nonce = getNonce();
+			const csp = `default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';`;
 			return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
 				<meta charset="UTF-8">
+				<meta http-equiv="Content-Security-Policy" content="${csp}">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<title>DICOM Metadata</title>
 				<link href="${cssUri}" rel="stylesheet" />
@@ -307,7 +341,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					<button class="dicom-action-btn replace" title="Replace original DICOM">Replace DICOM</button>
 					<button class="dicom-action-btn discard" title="Discard all changes">Discard Changes</button>
 				</div>
-				<script src="${scriptUri}"></script>
+				<script nonce="${nonce}" src="${scriptUri}"></script>
 			</body>
 			</html>`;
 		}
