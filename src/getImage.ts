@@ -359,6 +359,33 @@ export function getMetadata(filepath: string): Array<any> {
     return metadata;
 }
 
+// @iwharris/dicom-data-dictionary stores some tag names pre-escaped as HTML
+// (e.g. the literal string "Referring Physician&#x27;s Name" instead of
+// "Referring Physician's Name" — likely scraped from an HTML source table).
+// Our own HTML escaping then correctly escapes that stray "&", so the
+// browser renders it back as literal "&#x27;" text instead of decoding it.
+// Decode entities out of the name once here, at the source, so escapeHtml()
+// only ever sees the real apostrophe.
+const NAMED_HTML_ENTITIES: Record<string, string> = {
+    amp: '&',
+    lt: '<',
+    gt: '>',
+    quot: '"',
+    apos: "'",
+};
+
+function decodeHtmlEntities(text: string): string {
+    return text.replace(/&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (match, entity) => {
+        if (entity[0] === '#') {
+            const codePoint = entity[1] === 'x' || entity[1] === 'X'
+                ? parseInt(entity.slice(2), 16)
+                : parseInt(entity.slice(1), 10);
+            return Number.isNaN(codePoint) ? match : String.fromCodePoint(codePoint);
+        }
+        return NAMED_HTML_ENTITIES[entity] ?? match;
+    });
+}
+
 function getTagInfo(tag: string, element: any, dictionary: any) {
     // get the info of the tag itself
     let tagName = 'Unknown';
@@ -367,13 +394,13 @@ function getTagInfo(tag: string, element: any, dictionary: any) {
 
     try {
         const elem = dictionary.get_element(cleanTag);
-        tagName = elem["name"];
+        tagName = decodeHtmlEntities(elem["name"]);
         vr = elem["vr"];
     }
     catch {
         // ignore the error, it's just iwharris not finding the vr
     }
-    
+
     // use the VR from the element if available, otherwise use our lookup
     const finalVr = normalizeVR(element.vr || vr);
 
