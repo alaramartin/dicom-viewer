@@ -3,6 +3,7 @@ node_modules/
 
 # Compiled TypeScript output
 out/
+dist/
 *.map
 
 # Test output and coverage

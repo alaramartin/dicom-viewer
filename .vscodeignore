@@ -1,0 +1,24 @@
+.vscode/**
+.vscode-test/**
+.vscode-test.mjs
+.github/**
+build/**
+out/**
+src/**
+node_modules/**
+*.vsix
+*.map
+.gitignore
+.eslintrc*
+eslint.config.mjs
+tsconfig.json
+vsc-extension-quickstart.md
+PLAN.md
+CLAUDE.md
+
+# README screenshots are hot-linked from raw.githubusercontent.com — they
+# only need to exist in the git repo, not the packaged VSIX. logo.png is the
+# manifest icon and does need to ship.
+media/images/example-dicom.png
+media/images/example-dicom-edit.png
+media/images/example-dicom-warning.png
