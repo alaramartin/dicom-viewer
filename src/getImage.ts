@@ -380,6 +380,42 @@ function getTagInfo(tag: string, element: any, dictionary: any) {
     return {tagName, finalVr};
 }
 
+// binary numeric VRs — dataSet.string() doesn't work on these (they're not
+// text), so reading them that way silently returns "[Empty]" or garbage.
+// Each entry gives the per-value byte size and the dicom-parser accessor.
+const NUMERIC_VR_READERS: Record<string, { size: number; read: (dataSet: dicomParser.DataSet, tag: string, index: number) => number | undefined }> = {
+    US: { size: 2, read: (ds, tag, i) => ds.uint16(tag, i) },
+    SS: { size: 2, read: (ds, tag, i) => ds.int16(tag, i) },
+    UL: { size: 4, read: (ds, tag, i) => ds.uint32(tag, i) },
+    SL: { size: 4, read: (ds, tag, i) => ds.int32(tag, i) },
+    FL: { size: 4, read: (ds, tag, i) => ds.float(tag, i) },
+    FD: { size: 8, read: (ds, tag, i) => ds.double(tag, i) },
+};
+
+function getNumericTagValue(dataSet: dicomParser.DataSet, tag: string, vr: string): string | undefined {
+    if (vr === 'AT') {
+        // dicom-parser's attributeTag() only reads a single value, no index
+        return dataSet.attributeTag(tag);
+    }
+
+    const reader = NUMERIC_VR_READERS[vr];
+    const element = dataSet.elements[tag];
+    if (!reader || !element || !element.length) {
+        return undefined;
+    }
+
+    const count = Math.max(1, Math.floor(element.length / reader.size));
+    const values: string[] = [];
+    for (let i = 0; i < count; i++) {
+        const value = reader.read(dataSet, tag, i);
+        if (value === undefined) {
+            break;
+        }
+        values.push(String(value));
+    }
+    return values.length ? values.join('\\') : undefined;
+}
+
 function getTagValue(dataSet: dicomParser.DataSet, tag: string, vr: string): string {
     if (vr === 'SQ') {
         return '[Sequence]';
@@ -389,8 +425,11 @@ function getTagValue(dataSet: dicomParser.DataSet, tag: string, vr: string): str
         // if the VR is a date, make it more readable format (YYYY/MM/DD)
         const dateStr = dataSet.string(tag);
         return formatDate(dateStr);
+    } else if (vr in NUMERIC_VR_READERS || vr === 'AT') {
+        const numericValue = getNumericTagValue(dataSet, tag, vr);
+        return numericValue !== undefined ? numericValue : '[Empty]';
     } else {
-        // get string representation for text/numeric VRs
+        // get string representation for text/numeric-string VRs (IS, DS, etc.)
         try {
             return dataSet.string(tag) || '[Empty]';
         } catch (e) {
