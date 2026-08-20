@@ -179,17 +179,19 @@ td {
 }
 
 .sequence-header {
-    background-color: #3a3a3a;
+    /* subtle tint toward the foreground color so it stays visible and keeps
+       its relative prominence in both light and dark themes */
+    background-color: color-mix(in srgb, var(--vscode-editor-background) 75%, var(--vscode-editor-foreground) 25%);
 }
 
 .sequence-header td {
-    border-bottom: 2px solid #555;
+    border-bottom: 2px solid var(--vscode-panel-border);
 }
 
 .sequence-toggle {
     background: none;
     border: none;
-    color: #ffffff;
+    color: var(--vscode-editor-foreground);
     cursor: pointer;
     font-size: 12px;
     margin-right: 5px;
@@ -198,15 +200,15 @@ td {
 }
 
 .sequence-toggle:hover {
-    background-color: #555;
+    background-color: var(--vscode-list-hoverBackground);
 }
 
 .sequence-item-header {
-    background-color: #2a2a2a;
+    background-color: color-mix(in srgb, var(--vscode-editor-background) 85%, var(--vscode-editor-foreground) 15%);
 }
 
 .sequence-element {
-    background-color: #252525;
+    background-color: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-editor-foreground) 8%);
 }
 
 .sequence-child {
