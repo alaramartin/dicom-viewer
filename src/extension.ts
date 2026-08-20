@@ -72,6 +72,14 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			const originalMetadata = getMetadata(filepath);
 			let metadata = originalMetadata;
 
+			// pending edits/removals live in the webview's JS, but the webview
+			// itself is disposed and recreated every time the user switches away
+			// from the image tab and back (see onDidChangeViewState below) — so
+			// mirror them here, in the extension host, which outlives that cycle,
+			// and hand them back to each freshly created panel.
+			let hostPendingEdits: Record<string, any> = {};
+			let hostPendingRemovals: any[] = [];
+
 			// create the side-by-side view of metadata
 			const createMetadataPanel = () => {
 				metadataPanel = vscode.window.createWebviewPanel(
@@ -102,7 +110,15 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				}
 				// always initialize with original metadata
 				metadataPanel.webview.html = this.getMetadataWebviewContent(metadataPanel.webview, metadata, cssUri, scriptUri);
-				
+				if (!isCompressed) {
+					// hand back whatever was pending before this panel was last
+					// torn down (e.g. on tab switch) so it doesn't look discarded
+					metadataPanel.webview.postMessage({
+						command: "restorePendingEdits",
+						edits: hostPendingEdits,
+						removals: hostPendingRemovals
+					});
+				}
 
 				// handle messages from the webview
 				metadataPanel.webview.onDidReceiveMessage(
@@ -132,15 +148,21 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 											getLogger().error(`DICOM save failed (${describeError(e).type})`);
 										}
 										// reset the webview html and the pending changes
+										hostPendingEdits = {};
+										hostPendingRemovals = [];
 										resetMetadataPanel();
 									}
 									if (message.mode === "new") {
 										// reset the original
+										hostPendingEdits = {};
+										hostPendingRemovals = [];
 										resetMetadataPanel();
 									} else if (message.mode === "replace") {
 										// reload metadata from the updated file
 										const updatedMetadata = getMetadata(filepath);
 										metadata = updatedMetadata;
+										hostPendingEdits = {};
+										hostPendingRemovals = [];
 										if (metadataPanel) {
 											metadataPanel.webview.html = this.getMetadataWebviewContent(metadataPanel.webview, metadata, cssUri, scriptUri);
 										}
@@ -148,7 +170,15 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 									break;
 								}
 								case "reload":
+									hostPendingEdits = {};
+									hostPendingRemovals = [];
 									resetMetadataPanel();
+									break;
+								case "pendingChanged":
+									// mirror the webview's in-progress edits so they survive
+									// this panel being disposed/recreated (tab switch)
+									hostPendingEdits = message.edits || {};
+									hostPendingRemovals = message.removals || [];
 									break;
 							}
 						}

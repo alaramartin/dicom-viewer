@@ -39,6 +39,83 @@ function showDicomActions(show) {
     actions.style.display = show ? 'flex' : 'none';
 }
 
+// mirror pendingEdits/pendingRemovals up to the extension host, so they
+// survive this panel being disposed and recreated (e.g. switching away from
+// the image tab and back — see PLAN.md "pending edits silently discarded on
+// tab switch"). The webview itself is torn down on every such switch; the
+// host is not.
+function notifyPendingChanged() {
+    vscode.postMessage({
+        command: "pendingChanged",
+        edits: pendingEdits,
+        removals: Array.from(pendingRemovals)
+    });
+}
+
+// find the value cell for a previously-recorded edit/removal, by the same
+// identity it was recorded under (tag, or sequenceTag+itemIndex+elementTag)
+function findTargetCell(editOrRemoval) {
+    if (editOrRemoval.isSequenceElement) {
+        const itemTag = `${editOrRemoval.sequenceTag}_item_${editOrRemoval.itemIndex}`;
+        const rows = document.querySelectorAll(`tr[data-parent="${itemTag}"]`);
+        for (const row of rows) {
+            const rowTag = row.cells[0].textContent.trim().replace(/^x/, "");
+            if (rowTag === editOrRemoval.elementTag) {
+                return row.cells[row.cells.length - 1];
+            }
+        }
+        return null;
+    } else {
+        const rows = document.querySelectorAll("tbody > tr");
+        for (const row of rows) {
+            if (row.hasAttribute("data-parent") || !row.cells.length) {
+                continue;
+            }
+            if (row.cells[0].textContent.trim() === editOrRemoval.tag) {
+                return row.cells[row.cells.length - 1];
+            }
+        }
+        return null;
+    }
+}
+
+// re-apply edits/removals the host remembers from before this panel was
+// last torn down
+function restorePendingEdits(edits, removals) {
+    Object.entries(edits || {}).forEach(([hexTag, editData]) => {
+        const cell = findTargetCell(editData);
+        if (!cell) {
+            return;
+        }
+        let displayValue = editData.value;
+        if (editData.vr === "DA" && /^\d{8}$/.test(displayValue)) {
+            displayValue = `${displayValue.slice(0, 4)}/${displayValue.slice(4, 6)}/${displayValue.slice(6, 8)}`;
+        }
+        cell.textContent = displayValue === "" ? "[Empty]" : displayValue;
+        pendingEdits[hexTag] = editData;
+    });
+
+    (removals || []).forEach(removalData => {
+        const cell = findTargetCell(removalData);
+        if (cell) {
+            cell.closest("tr").remove();
+        }
+        pendingRemovals.add(removalData);
+    });
+
+    if (Object.keys(pendingEdits).length > 0 || pendingRemovals.size > 0) {
+        hasChanges = true;
+        showDicomActions(true);
+    }
+}
+
+window.addEventListener("message", event => {
+    const message = event.data;
+    if (message.command === "restorePendingEdits") {
+        restorePendingEdits(message.edits, message.removals);
+    }
+});
+
 // keep track of any changes made to the dicom
 function markChanged(invalidated) {
     hasChanges = true;
@@ -311,6 +388,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     // if the tag was required but still edited, mark as potentially invalidated
                     markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 }
+                notifyPendingChanged();
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
@@ -361,6 +439,7 @@ document.addEventListener("DOMContentLoaded", function() {
                     // if the tag was required but still edited, mark as potentially invalidated
                     markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 }
+                notifyPendingChanged();
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
@@ -390,6 +469,7 @@ document.addEventListener("DOMContentLoaded", function() {
                 
                 // if the tag was required but still removed, mark as potentially invalidated
                 markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
+                notifyPendingChanged();
                 row.remove();
             }
             else {
