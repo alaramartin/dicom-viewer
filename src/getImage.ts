@@ -17,7 +17,7 @@ export function convertDicomToBase64(filepath: string): string {
         // get the dicom file and its metadata
         const dicomFile = fs.readFileSync(filepath);
         const dataSet = dicomParser.parseDicom(dicomFile);
-        
+
         // getting various dicom attributes using their header tags
         const rows = dataSet.uint16('x00280010');
         const cols = dataSet.uint16('x00280011');
@@ -25,9 +25,9 @@ export function convertDicomToBase64(filepath: string): string {
         const bitsStored = dataSet.uint16('x00280101') || bitsAllocated;
         const pixelRepresentation = dataSet.uint16('x00280103') || 0;
         const samplesPerPixel = dataSet.uint16('x00280002') || 1;
-        const photometricInterpretation = dataSet.string('x00280004') || 'MONOCHROME2';
+        const photometricInterpretation = (dataSet.string('x00280004') || 'MONOCHROME2').toUpperCase();
+        const planarConfiguration = dataSet.uint16('x00280006') || 0;
         const pixelData = dataSet.elements.x7fe00010; // this is the pixel array
-        const modality = dataSet.string('x00080060') || 'UNKNOWN';
         const transferSyntaxUID = dataSet.string('x00020010');
         const numberOfFrames = dataSet.intString('x00280008') || 1;
 
@@ -43,9 +43,15 @@ export function convertDicomToBase64(filepath: string): string {
             return "compressed";
         }
 
-        let pixelArray;
+        const isPalette = samplesPerPixel === 1 && photometricInterpretation === 'PALETTE COLOR';
+        // YBR_FULL_422 chroma-subsamples: every 2 pixels share one Cb/Cr pair,
+        // so it only takes 2 bytes/pixel on average instead of 3 (PS3.5 8.2.1).
+        const isSubsampled422 = samplesPerPixel === 3 && photometricInterpretation === 'YBR_FULL_422';
+        const isFullColor = samplesPerPixel === 3 && !isSubsampled422; // RGB, YBR_FULL, etc.
+
         const bytesPerSample = Math.ceil(bitsAllocated / 8);
-        const singleFrameLength = rows * cols * samplesPerPixel * bytesPerSample;
+        const bytesPerPixel = isSubsampled422 ? 2 * bytesPerSample : samplesPerPixel * bytesPerSample;
+        const singleFrameLength = rows * cols * bytesPerPixel;
         const expectedLength = singleFrameLength * numberOfFrames;
 
         if (expectedLength !== pixelData.length) {
@@ -55,76 +61,37 @@ export function convertDicomToBase64(filepath: string): string {
             throw new Error(`Pixel data length mismatch: expected ${expectedLength} bytes, got ${pixelData.length}`);
         }
 
-        // handle different bit depths — only the first frame is decoded for
-        // now; multi-frame navigation is a Phase 2 feature
-        if (bitsAllocated <= 8) {
-            pixelArray = new Uint8Array(dicomFile.buffer, pixelData.dataOffset, Math.min(pixelData.length, singleFrameLength));
-        } else if (bitsAllocated <= 16) {
-            const length16 = Math.min(pixelData.length / 2, rows * cols * samplesPerPixel);
-            if (pixelRepresentation === 1) {
-                pixelArray = new Int16Array(dicomFile.buffer, pixelData.dataOffset, length16);
-            } else {
-                pixelArray = new Uint16Array(dicomFile.buffer, pixelData.dataOffset, length16);
-            }
-        } else {
+        if (bitsAllocated > 16) {
             throw new Error(`Unsupported bit allocation: ${bitsAllocated}`);
         }
 
-        // find min/max for windowing (like window/level, adjusting contrast to make it better visibility)
-        let min = Number.MAX_SAFE_INTEGER;
-        let max = Number.MIN_SAFE_INTEGER;
-        const validPixelCount = Math.min(pixelArray.length, rows * cols);
-        
-        for (let i = 0; i < validPixelCount; i++) {
-            const pixel = pixelArray[i];
-            min = Math.min(min, pixel);
-            max = Math.max(max, pixel);
-        }
+        // only the first frame is decoded for now; multi-frame navigation is
+        // a Phase 2 feature
+        const frameByteLength = Math.min(pixelData.length, singleFrameLength);
+        const frameBytes: Uint8Array | Uint16Array | Int16Array = bitsAllocated <= 8
+            ? new Uint8Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, frameByteLength)
+            : pixelRepresentation === 1
+                ? new Int16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, Math.floor(frameByteLength / 2))
+                : new Uint16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, Math.floor(frameByteLength / 2));
 
         // create PNG
         const png = new PNG({ width: cols, height: rows });
+        const pixelCount = rows * cols;
 
-        // convert pixels with proper windowing
-        for (let i = 0; i < validPixelCount; i++) {
-            let pixel = pixelArray[i];
-            
-            // handle signed data
-            if (pixelRepresentation === 1 && pixel < 0) {
-                pixel = pixel + (1 << bitsStored);
-            }
-            
-            // normalize to 0-255
-            let normalizedPixel;
-            if (max === min) {
-                normalizedPixel = 0;
-            } else {
-                normalizedPixel = (pixel - min) / (max - min);
-            }
-            
-            let gray = Math.floor(normalizedPixel * 255);
-            
-            // handle photometric interpretation
-            if (photometricInterpretation === 'MONOCHROME1') {
-                // invert for MONOCHROME1 (0 = white)
-                gray = 255 - gray;
-            }
-            
-            // clamp to valid range
-            gray = Math.max(0, Math.min(255, gray)); 
-            
-            const idx = i * 4;
-            if (idx + 3 < png.data.length) {
-                png.data[idx] = gray;     // R
-                png.data[idx + 1] = gray; // G  
-                png.data[idx + 2] = gray; // B
-                png.data[idx + 3] = 255;  // A
-            }
+        if (isPalette) {
+            renderPaletteColor(png, dataSet, dicomFile, frameBytes, pixelCount);
+        } else if (isFullColor) {
+            renderFullColor(png, frameBytes as Uint8Array, pixelCount, samplesPerPixel, planarConfiguration, photometricInterpretation);
+        } else if (isSubsampled422) {
+            renderSubsampled422(png, frameBytes as Uint8Array, rows, cols);
+        } else {
+            renderGrayscale(png, frameBytes, pixelCount, pixelRepresentation, bitsStored, photometricInterpretation);
         }
 
         // convert PNG to base64
         const buffer = PNG.sync.write(png);
         return 'data:image/png;base64,' + buffer.toString('base64');
-        
+
     } catch (error: unknown) {
         // never log the error object itself — dicom-parser errors can embed tag values.
         // dicom-parser sometimes throws plain strings rather than Error objects.
@@ -132,6 +99,185 @@ export function convertDicomToBase64(filepath: string): string {
         getLogger().error(`DICOM image conversion failed (${type})`);
         throw new Error(`Failed to convert DICOM: ${message}`);
     }
+}
+
+// MONOCHROME1/MONOCHROME2 — normalize to the actual min/max of the pixel
+// data (Phase 2 will honor WindowCenter/WindowWidth instead).
+function renderGrayscale(png: any, pixelArray: Uint8Array | Uint16Array | Int16Array, pixelCount: number, pixelRepresentation: number, bitsStored: number, photometricInterpretation: string) {
+    let min = Number.MAX_SAFE_INTEGER;
+    let max = Number.MIN_SAFE_INTEGER;
+    const validPixelCount = Math.min(pixelArray.length, pixelCount);
+
+    for (let i = 0; i < validPixelCount; i++) {
+        const pixel = pixelArray[i];
+        min = Math.min(min, pixel);
+        max = Math.max(max, pixel);
+    }
+
+    for (let i = 0; i < validPixelCount; i++) {
+        let pixel = pixelArray[i];
+
+        // handle signed data
+        if (pixelRepresentation === 1 && pixel < 0) {
+            pixel = pixel + (1 << bitsStored);
+        }
+
+        // normalize to 0-255
+        let normalizedPixel;
+        if (max === min) {
+            normalizedPixel = 0;
+        } else {
+            normalizedPixel = (pixel - min) / (max - min);
+        }
+
+        let gray = Math.floor(normalizedPixel * 255);
+
+        // handle photometric interpretation
+        if (photometricInterpretation === 'MONOCHROME1') {
+            // invert for MONOCHROME1 (0 = white)
+            gray = 255 - gray;
+        }
+
+        // clamp to valid range
+        gray = Math.max(0, Math.min(255, gray));
+
+        const idx = i * 4;
+        if (idx + 3 < png.data.length) {
+            png.data[idx] = gray;     // R
+            png.data[idx + 1] = gray; // G
+            png.data[idx + 2] = gray; // B
+            png.data[idx + 3] = 255;  // A
+        }
+    }
+}
+
+// RGB and YBR_FULL (non-subsampled) — one sample triplet per pixel, either
+// interleaved (PlanarConfiguration 0, the default) or planar (1).
+function renderFullColor(png: any, bytes: Uint8Array, pixelCount: number, samplesPerPixel: number, planarConfiguration: number, photometricInterpretation: string) {
+    const isYbr = photometricInterpretation.startsWith('YBR');
+    const validPixelCount = Math.min(pixelCount, Math.floor(bytes.length / samplesPerPixel));
+
+    for (let i = 0; i < validPixelCount; i++) {
+        let s0: number, s1: number, s2: number;
+        if (planarConfiguration === 1) {
+            // color-by-plane: all of sample 0, then all of sample 1, then sample 2
+            s0 = bytes[i];
+            s1 = bytes[pixelCount + i];
+            s2 = bytes[2 * pixelCount + i];
+        } else {
+            // color-by-pixel (interleaved) — the default
+            s0 = bytes[i * 3];
+            s1 = bytes[i * 3 + 1];
+            s2 = bytes[i * 3 + 2];
+        }
+
+        const [r, g, b] = isYbr ? ybrToRgb(s0, s1, s2) : [s0, s1, s2];
+        writeRgbPixel(png, i, r, g, b);
+    }
+}
+
+// YBR_FULL_422 — chroma-subsampled: every 2 horizontally adjacent pixels
+// share one Cb/Cr pair, encoded as 4 bytes per pair: Y1, Y2, Cb, Cr
+// (PS3.5 8.2.1). Always color-by-pixel; PlanarConfiguration doesn't apply.
+function renderSubsampled422(png: any, bytes: Uint8Array, rows: number, cols: number) {
+    const pairCols = Math.floor(cols / 2);
+    for (let row = 0; row < rows; row++) {
+        for (let pair = 0; pair < pairCols; pair++) {
+            const byteIdx = (row * pairCols + pair) * 4;
+            if (byteIdx + 3 >= bytes.length) {
+                break;
+            }
+            const y1 = bytes[byteIdx];
+            const y2 = bytes[byteIdx + 1];
+            const cb = bytes[byteIdx + 2];
+            const cr = bytes[byteIdx + 3];
+
+            const col1 = pair * 2;
+            const col2 = col1 + 1;
+            const [r1, g1, b1] = ybrToRgb(y1, cb, cr);
+            writeRgbPixel(png, row * cols + col1, r1, g1, b1);
+            if (col2 < cols) {
+                const [r2, g2, b2] = ybrToRgb(y2, cb, cr);
+                writeRgbPixel(png, row * cols + col2, r2, g2, b2);
+            }
+        }
+    }
+}
+
+// PALETTE COLOR — one sample per pixel, indexing into three 1:1 LUTs
+// (0028,1101-1103 descriptors + 0028,1201-1203 data) to get RGB.
+function renderPaletteColor(png: any, dataSet: dicomParser.DataSet, dicomFile: Buffer, indices: Uint8Array | Uint16Array | Int16Array, pixelCount: number) {
+    const redLut = readPaletteLut(dataSet, dicomFile, 'x00281101', 'x00281201');
+    const greenLut = readPaletteLut(dataSet, dicomFile, 'x00281102', 'x00281202');
+    const blueLut = readPaletteLut(dataSet, dicomFile, 'x00281103', 'x00281203');
+
+    if (!redLut || !greenLut || !blueLut) {
+        throw new Error('PALETTE COLOR image is missing one or more LUT tables');
+    }
+
+    const firstInputValue = dataSet.uint16('x00281101', 1) || 0;
+    const validPixelCount = Math.min(pixelCount, indices.length);
+
+    for (let i = 0; i < validPixelCount; i++) {
+        let lutIndex = indices[i] - firstInputValue;
+        lutIndex = Math.max(0, Math.min(redLut.length - 1, lutIndex));
+
+        const r = lutEntryToByte(redLut, lutIndex);
+        const g = lutEntryToByte(greenLut, lutIndex);
+        const b = lutEntryToByte(blueLut, lutIndex);
+        writeRgbPixel(png, i, r, g, b);
+    }
+}
+
+function readPaletteLut(dataSet: dicomParser.DataSet, dicomFile: Buffer, descriptorTag: string, dataTag: string): Uint8Array | Uint16Array | null {
+    const descriptorElement = dataSet.elements[descriptorTag];
+    const dataElement = dataSet.elements[dataTag];
+    if (!descriptorElement || !dataElement) {
+        return null;
+    }
+
+    // Descriptor is 3 values: [numberOfEntries, firstInputValue, bitsPerEntry].
+    // numberOfEntries of 0 means 65536, per the DICOM standard.
+    let numberOfEntries = dataSet.uint16(descriptorTag, 0) || 0;
+    const bitsPerEntry = dataSet.uint16(descriptorTag, 2) || 8;
+    if (numberOfEntries === 0) {
+        numberOfEntries = 65536;
+    }
+
+    if (bitsPerEntry === 8) {
+        return new Uint8Array(dicomFile.buffer, dicomFile.byteOffset + dataElement.dataOffset, Math.min(dataElement.length, numberOfEntries));
+    } else {
+        const count = Math.min(Math.floor(dataElement.length / 2), numberOfEntries);
+        return new Uint16Array(dicomFile.buffer, dicomFile.byteOffset + dataElement.dataOffset, count);
+    }
+}
+
+function lutEntryToByte(lut: Uint8Array | Uint16Array, index: number): number {
+    // 16-bit LUT entries carry the significant value in the high byte
+    return lut instanceof Uint8Array ? lut[index] : (lut[index] >> 8) & 0xff;
+}
+
+function writeRgbPixel(png: any, pixelIndex: number, r: number, g: number, b: number) {
+    const idx = pixelIndex * 4;
+    if (idx + 3 < png.data.length) {
+        png.data[idx] = r;
+        png.data[idx + 1] = g;
+        png.data[idx + 2] = b;
+        png.data[idx + 3] = 255;
+    }
+}
+
+// ITU-R BT.601 full-range YCbCr -> RGB (DICOM PS3.5 uses this transform for
+// YBR_FULL / YBR_FULL_422).
+function ybrToRgb(y: number, cb: number, cr: number): [number, number, number] {
+    const r = y + 1.402 * (cr - 128);
+    const g = y - 0.344136 * (cb - 128) - 0.714136 * (cr - 128);
+    const b = y + 1.772 * (cb - 128);
+    return [clamp8(r), clamp8(g), clamp8(b)];
+}
+
+function clamp8(value: number): number {
+    return Math.max(0, Math.min(255, Math.round(value)));
 }
 
 // export function getMetadata(filepath: string): Array<any> {
