@@ -3,6 +3,15 @@ import * as fs from 'fs';
 import { PNG } from 'pngjs';
 import { getLogger, describeError } from './logger';
 
+// Transfer syntaxes that carry raw, uncompressed pixel data. Anything else
+// (JPEG baseline/lossless, JPEG-LS, JPEG 2000, RLE, etc.) is compressed and
+// needs a codec we don't have yet — see Phase 2 in PLAN.md.
+const UNCOMPRESSED_TRANSFER_SYNTAXES = new Set([
+    '1.2.840.10008.1.2',   // Implicit VR Little Endian
+    '1.2.840.10008.1.2.1', // Explicit VR Little Endian
+    '1.2.840.10008.1.2.2', // Explicit VR Big Endian (retired)
+]);
+
 export function convertDicomToBase64(filepath: string): string {
     try {
         // get the dicom file and its metadata
@@ -19,23 +28,37 @@ export function convertDicomToBase64(filepath: string): string {
         const photometricInterpretation = dataSet.string('x00280004') || 'MONOCHROME2';
         const pixelData = dataSet.elements.x7fe00010; // this is the pixel array
         const modality = dataSet.string('x00080060') || 'UNKNOWN';
-        
+        const transferSyntaxUID = dataSet.string('x00020010');
+        const numberOfFrames = dataSet.intString('x00280008') || 1;
 
         if (!pixelData || !rows || !cols) {
             throw new Error('Missing DICOM data');
         }
 
-        let pixelArray;
-        const bytesPerSample = Math.ceil(bitsAllocated / 8);
-        const expectedLength = rows * cols * samplesPerPixel * bytesPerSample;
-        
-        if (expectedLength !== pixelData.length) {
+        // detect compression from the transfer syntax itself, not from a pixel
+        // data length mismatch — a multi-frame uncompressed file has
+        // pixelData.length = singleFrameLength * NumberOfFrames, which used to
+        // fail the length check and get mislabeled "compressed".
+        if (transferSyntaxUID && !UNCOMPRESSED_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
             return "compressed";
         }
 
-        // handle different bit depths
+        let pixelArray;
+        const bytesPerSample = Math.ceil(bitsAllocated / 8);
+        const singleFrameLength = rows * cols * samplesPerPixel * bytesPerSample;
+        const expectedLength = singleFrameLength * numberOfFrames;
+
+        if (expectedLength !== pixelData.length) {
+            // transfer syntax says uncompressed, but the header doesn't
+            // describe the data we actually got — a real problem, not
+            // something to silently paper over as "compressed".
+            throw new Error(`Pixel data length mismatch: expected ${expectedLength} bytes, got ${pixelData.length}`);
+        }
+
+        // handle different bit depths — only the first frame is decoded for
+        // now; multi-frame navigation is a Phase 2 feature
         if (bitsAllocated <= 8) {
-            pixelArray = new Uint8Array(dicomFile.buffer, pixelData.dataOffset, Math.min(pixelData.length, expectedLength));
+            pixelArray = new Uint8Array(dicomFile.buffer, pixelData.dataOffset, Math.min(pixelData.length, singleFrameLength));
         } else if (bitsAllocated <= 16) {
             const length16 = Math.min(pixelData.length / 2, rows * cols * samplesPerPixel);
             if (pixelRepresentation === 1) {
