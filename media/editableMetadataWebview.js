@@ -14,6 +14,25 @@ let pendingRemovals = new Set();
 let hasChanges = false;
 let isDicomInvalid = false;
 
+// the true original value of each editable tag, captured once when the
+// panel loads — used to detect when an edit is reverted back to it
+let originalValues = {};
+
+// mirrors the raw-value normalization applied to pendingEdits (DA slashes
+// stripped, "[Empty]" treated as ""), so a cell's current text can be
+// compared apples-to-apples against its original value
+function computeRawValue(cell) {
+    const text = cell.textContent;
+    if (text === "[Empty]") {
+        return "";
+    }
+    const vr = getVR(cell);
+    if (vr === "DA" && text.includes("/")) {
+        return text.replace(/\//g, "");
+    }
+    return text;
+}
+
 // once something has been edited, buttons pop up to save or discard changes to the dicom
 function showDicomActions(show) {
     const actions = document.getElementById('dicom-actions');
@@ -27,8 +46,25 @@ function markChanged(invalidated) {
         addInvalidatedWarnings();
         isDicomInvalid = true;
     }
-    // todo: add check for if it reverted
     showDicomActions(true);
+}
+
+// recompute whether anything is still pending, now that an edit may have
+// been dropped (reverted back to its original value). hides the action bar
+// once both pending collections are empty again.
+function updateActionBarState() {
+    hasChanges = Object.keys(pendingEdits).length > 0 || pendingRemovals.size > 0;
+    if (!hasChanges) {
+        isDicomInvalid = false;
+        removeInvalidatedWarnings();
+    }
+    showDicomActions(hasChanges);
+}
+
+// true if editing this tag back to rawValue would restore its original,
+// pre-edit value
+function isRevertedToOriginal(hexTag, rawValue) {
+    return Object.prototype.hasOwnProperty.call(originalValues, hexTag) && originalValues[hexTag] === rawValue;
 }
 
 // when dicom is at risk of being invalidated, add a tooltip warning to the official save buttons
@@ -141,6 +177,11 @@ document.addEventListener("DOMContentLoaded", function() {
             (when out of focus, remove this row)
     */
 
+    // snapshot every editable cell's original value before any edits happen
+    document.querySelectorAll(".editable-cell").forEach(cell => {
+        originalValues[getHexTag(cell)] = computeRawValue(cell);
+    });
+
     // all sequence elemenst should be initialized collapsed
     document.querySelectorAll(".sequence-header").forEach(header => {
         header.classList.add("sequence-collapsed");
@@ -248,21 +289,28 @@ document.addEventListener("DOMContentLoaded", function() {
                     rawValue = newValue.replace(/\//g, "");
                 }
 
-                // store edit, don't send to extension yet
-                if (info.isSequenceElement) {
-                    pendingEdits[hexTag] = {
-                        vr: VR,
-                        value: rawValue,
-                        isSequenceElement: true,
-                        sequenceTag: info.sequenceTag,
-                        itemIndex: info.itemIndex,
-                        elementTag: info.elementTag
-                    };
+                if (isRevertedToOriginal(hexTag, rawValue)) {
+                    // edited back to its original value — drop the pending
+                    // edit instead of leaving the file marked dirty
+                    delete pendingEdits[hexTag];
+                    updateActionBarState();
                 } else {
-                    pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
+                    // store edit, don't send to extension yet
+                    if (info.isSequenceElement) {
+                        pendingEdits[hexTag] = {
+                            vr: VR,
+                            value: rawValue,
+                            isSequenceElement: true,
+                            sequenceTag: info.sequenceTag,
+                            itemIndex: info.itemIndex,
+                            elementTag: info.elementTag
+                        };
+                    } else {
+                        pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
+                    }
+                    // if the tag was required but still edited, mark as potentially invalidated
+                    markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 }
-                // if the tag was required but still edited, mark as potentially invalidated
-                markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
@@ -291,21 +339,28 @@ document.addEventListener("DOMContentLoaded", function() {
                     rawValue = newValue.replace(/\//g, "");
                 }
 
-                // store edit, don't send to extension yet
-                if (info.isSequenceElement) {
-                    pendingEdits[hexTag] = {
-                        vr: VR,
-                        value: rawValue,
-                        isSequenceElement: true,
-                        sequenceTag: info.sequenceTag,
-                        itemIndex: info.itemIndex,
-                        elementTag: info.elementTag
-                    };
+                if (isRevertedToOriginal(hexTag, rawValue)) {
+                    // edited back to its original value — drop the pending
+                    // edit instead of leaving the file marked dirty
+                    delete pendingEdits[hexTag];
+                    updateActionBarState();
                 } else {
-                    pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
+                    // store edit, don't send to extension yet
+                    if (info.isSequenceElement) {
+                        pendingEdits[hexTag] = {
+                            vr: VR,
+                            value: rawValue,
+                            isSequenceElement: true,
+                            sequenceTag: info.sequenceTag,
+                            itemIndex: info.itemIndex,
+                            elementTag: info.elementTag
+                        };
+                    } else {
+                        pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
+                    }
+                    // if the tag was required but still edited, mark as potentially invalidated
+                    markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
                 }
-                // if the tag was required but still edited, mark as potentially invalidated
-                markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
             }
             else if (!editable) {
                 currentEditingCell.textContent = ogValue;
