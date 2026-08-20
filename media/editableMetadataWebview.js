@@ -6,6 +6,10 @@ let currentEditingCell = null;
 let editable = true;
 let edited = false;
 let ogValue = '';
+// the true original display text (e.g. "[Empty]"), captured before focusin
+// blanks it out for editing — used to restore it if the user focuses out
+// without ever actually changing anything
+let ogDisplayValue = '';
 let buttonRow = null;
 
 // track pending edits/removals
@@ -277,6 +281,7 @@ document.addEventListener("DOMContentLoaded", function() {
             // keep track of the cell being edited and its original value
             currentEditingCell = e.target;
             ogValue = e.target.textContent;
+            ogDisplayValue = ogValue;
             // make an empty cell be empty when editing it
             if (ogValue === "[Empty]") {
                 e.target.textContent = "";
@@ -304,6 +309,7 @@ document.addEventListener("DOMContentLoaded", function() {
         }
 
         const oldOgValue = ogValue;
+        const oldOgDisplayValue = ogDisplayValue;
         const wasEdited = edited; // capture the edited state at the time of focusout
         const isClickingSave = e.relatedTarget && e.relatedTarget.classList.contains("save-edits");
 
@@ -314,9 +320,18 @@ document.addEventListener("DOMContentLoaded", function() {
                 // display empty cell as "[Empty]"
                 oldCell.textContent = "[Empty]";
             }
-            // if no changes were saved, then revert back to original when focused out
+            // focused an originally-empty cell but never actually edited it
+            // (no Enter, no Save button) — restore the "[Empty]" label
+            // instead of leaving it looking blank
+            else if (!wasEdited && !isClickingSave && oldCell && oldCell.textContent === "" && oldOgDisplayValue === "[Empty]") {
+                oldCell.textContent = "[Empty]";
+            }
+            // if no changes were saved, then revert back to original when focused out.
+            // restore the true display text (e.g. "[Empty]"), not the raw
+            // editing value (e.g. ""), which is what ogValue holds for
+            // originally-empty/date cells
             else if (!wasEdited && !isClickingSave && oldCell && oldCell.textContent !== oldOgValue) {
-                oldCell.textContent = oldOgValue;
+                oldCell.textContent = oldOgDisplayValue;
             }
             // reformat dates
             if (oldCell && getVR(oldCell) === "DA") {
