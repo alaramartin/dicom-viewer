@@ -78,6 +78,42 @@ function getCharlsModule(): Promise<any> {
     return charlsModulePromise as Promise<any>;
 }
 
+// VOI (window/level) + Modality LUT (rescale) parameters, read once from the
+// DICOM header and threaded through every grayscale render path. Without
+// these, MONOCHROME images are normalized to their own min/max pixel value
+// instead of the file's real display intent — which looks wrong compared to
+// real viewers, and means displayed values were never actual Hounsfield
+// Units on CT. WindowCenter/WindowWidth are DS (Decimal String) and can be
+// multi-valued (multiple presets); only the first is used, matching what
+// most viewers default to.
+interface VoiLutParams {
+    rescaleSlope: number;
+    rescaleIntercept: number;
+    windowCenter?: number;
+    windowWidth?: number;
+}
+
+function getFirstNumericValue(dataSet: dicomParser.DataSet, tag: string): number | undefined {
+    const raw = dataSet.string(tag);
+    if (!raw) {
+        return undefined;
+    }
+    const value = parseFloat(raw.split('\\')[0].trim());
+    return Number.isFinite(value) ? value : undefined;
+}
+
+function getVoiLutParams(dataSet: dicomParser.DataSet): VoiLutParams {
+    const windowWidth = getFirstNumericValue(dataSet, 'x00281051');
+    return {
+        rescaleSlope: getFirstNumericValue(dataSet, 'x00281053') ?? 1,
+        rescaleIntercept: getFirstNumericValue(dataSet, 'x00281052') ?? 0,
+        windowCenter: getFirstNumericValue(dataSet, 'x00281050'),
+        // a non-positive width is invalid per the standard (and would divide
+        // by zero below) — treat it the same as absent rather than throw.
+        windowWidth: windowWidth !== undefined && windowWidth > 0 ? windowWidth : undefined,
+    };
+}
+
 export async function convertDicomToBase64(filepath: string): Promise<string> {
     try {
         // get the dicom file and its metadata
@@ -96,6 +132,7 @@ export async function convertDicomToBase64(filepath: string): Promise<string> {
         const pixelData = dataSet.elements.x7fe00010; // this is the pixel array
         const transferSyntaxUID = dataSet.string('x00020010');
         const numberOfFrames = dataSet.intString('x00280008') || 1;
+        const voi = getVoiLutParams(dataSet);
 
         if (!pixelData || !rows || !cols) {
             throw new Error('Missing DICOM data');
@@ -117,6 +154,13 @@ export async function convertDicomToBase64(filepath: string): Promise<string> {
             // only the first frame is decoded for now; multi-frame
             // navigation is a separate Phase 2 feature
             const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
+            // JPEG Baseline/Extended intentionally don't get VOI windowing —
+            // jpeg-js already quantized them to a fixed 0-255 display range as
+            // part of lossy DCT decoding, so there's no real "raw" sample left
+            // to rescale/window the way there is for the lossless/WASM paths
+            // below. In practice these two syntaxes are lossy 8-bit and used
+            // for photographic content (ultrasound, secondary capture) where
+            // WindowCenter/Width is rarely even present.
             if (transferSyntaxUID === JPEG_BASELINE_TRANSFER_SYNTAX) {
                 png = renderJpegBaselineFrame(compressedFrame, samplesPerPixel);
             } else if (transferSyntaxUID === JPEG_EXTENDED_TRANSFER_SYNTAX) {
@@ -129,13 +173,13 @@ export async function convertDicomToBase64(filepath: string): Promise<string> {
                 }
                 png = renderJpegBaselineFrame(compressedFrame, samplesPerPixel);
             } else if (transferSyntaxUID && JPEG_LOSSLESS_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
-                png = renderJpegLosslessFrame(compressedFrame, pixelRepresentation, photometricInterpretation);
+                png = renderJpegLosslessFrame(compressedFrame, pixelRepresentation, photometricInterpretation, voi);
             } else if (transferSyntaxUID && JPEG_LS_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
-                png = await renderJpegLSFrame(compressedFrame, pixelRepresentation);
+                png = await renderJpegLSFrame(compressedFrame, pixelRepresentation, voi);
             } else if (transferSyntaxUID && JPEG_2000_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
-                png = await renderJpeg2000Frame(compressedFrame, pixelRepresentation);
+                png = await renderJpeg2000Frame(compressedFrame, pixelRepresentation, voi);
             } else {
-                png = renderRleFrame(compressedFrame, dataSet, dicomFile, rows, cols, samplesPerPixel, bitsAllocated, bitsStored, pixelRepresentation, photometricInterpretation);
+                png = renderRleFrame(compressedFrame, dataSet, dicomFile, rows, cols, samplesPerPixel, bitsAllocated, bitsStored, pixelRepresentation, photometricInterpretation, voi);
             }
         } else {
             const isPalette = samplesPerPixel === 1 && photometricInterpretation === 'PALETTE COLOR';
@@ -180,7 +224,7 @@ export async function convertDicomToBase64(filepath: string): Promise<string> {
             } else if (isSubsampled422) {
                 renderSubsampled422(png, frameBytes as Uint8Array, rows, cols);
             } else {
-                renderGrayscale(png, frameBytes, pixelCount, pixelRepresentation, bitsStored, photometricInterpretation);
+                renderGrayscale(png, frameBytes, pixelCount, pixelRepresentation, bitsStored, photometricInterpretation, voi);
             }
         }
 
@@ -300,7 +344,7 @@ function renderJpegBaselineFrame(compressedFrame: Uint8Array, samplesPerPixel: n
 // 16-bit. jpeg-lossless-decoder-js derives width/height/component count/bit
 // depth from the JPEG stream itself, same trust-the-codestream approach as
 // the Baseline path above.
-function renderJpegLosslessFrame(compressedFrame: Uint8Array, pixelRepresentation: number, photometricInterpretation: string): any {
+function renderJpegLosslessFrame(compressedFrame: Uint8Array, pixelRepresentation: number, photometricInterpretation: string, voi?: VoiLutParams): any {
     const decoder = new jpegLossless.Decoder();
     const arrayBuffer = compressedFrame.buffer.slice(compressedFrame.byteOffset, compressedFrame.byteOffset + compressedFrame.length);
 
@@ -340,7 +384,7 @@ function renderJpegLosslessFrame(compressedFrame: Uint8Array, pixelRepresentatio
             }
             pixels = signed;
         }
-        renderGrayscale(png, pixels, pixelCount, pixelRepresentation, precision, photometricInterpretation);
+        renderGrayscale(png, pixels, pixelCount, pixelRepresentation, precision, photometricInterpretation, voi);
     }
 
     return png;
@@ -395,7 +439,7 @@ function decodeWithEmbindCodec(module: any, DecoderCtor: new () => any, compress
 // Writes a decoded WASM-codec frame (grayscale or interleaved-RGB, already
 // resolved to the right typed array width) into a PNG, reusing the same
 // renderers the other compressed paths use.
-function renderDecodedFrame(frame: DecodedFrame, pixelRepresentation: number, photometricInterpretation: string): any {
+function renderDecodedFrame(frame: DecodedFrame, pixelRepresentation: number, photometricInterpretation: string, voi?: VoiLutParams): any {
     const png = new PNG({ width: frame.width, height: frame.height });
     const pixelCount = frame.width * frame.height;
 
@@ -419,13 +463,13 @@ function renderDecodedFrame(frame: DecodedFrame, pixelRepresentation: number, ph
         }
         pixels = signed;
     }
-    renderGrayscale(png, pixels, pixelCount, isSigned ? 1 : 0, frame.bitsPerSample, photometricInterpretation);
+    renderGrayscale(png, pixels, pixelCount, isSigned ? 1 : 0, frame.bitsPerSample, photometricInterpretation, voi);
     return png;
 }
 
 // JPEG 2000 (transfer syntaxes ...4.90 lossless-only / ...4.91 lossy-allowed)
 // via @cornerstonejs/codec-openjpeg's WASM build of OpenJPEG.
-async function renderJpeg2000Frame(compressedFrame: Uint8Array, pixelRepresentation: number): Promise<any> {
+async function renderJpeg2000Frame(compressedFrame: Uint8Array, pixelRepresentation: number, voi?: VoiLutParams): Promise<any> {
     let openjpeg;
     try {
         openjpeg = await getOpenJpegModule();
@@ -443,12 +487,12 @@ async function renderJpeg2000Frame(compressedFrame: Uint8Array, pixelRepresentat
     // J2K's internal color transform (when present) is applied by the
     // decoder itself, so 3-component output is already RGB — no separate
     // YCbCr conversion needed here, same as the JPEG Baseline path.
-    return renderDecodedFrame(frame, pixelRepresentation, 'RGB');
+    return renderDecodedFrame(frame, pixelRepresentation, 'RGB', voi);
 }
 
 // JPEG-LS (transfer syntaxes ...4.80 lossless / ...4.81 near-lossless) via
 // @cornerstonejs/codec-charls's WASM build of CharLS.
-async function renderJpegLSFrame(compressedFrame: Uint8Array, pixelRepresentation: number): Promise<any> {
+async function renderJpegLSFrame(compressedFrame: Uint8Array, pixelRepresentation: number, voi?: VoiLutParams): Promise<any> {
     let charls;
     try {
         charls = await getCharlsModule();
@@ -463,14 +507,14 @@ async function renderJpegLSFrame(compressedFrame: Uint8Array, pixelRepresentatio
         throw new Error('Failed to decode JPEG-LS pixel data');
     }
 
-    return renderDecodedFrame(frame, pixelRepresentation, 'RGB');
+    return renderDecodedFrame(frame, pixelRepresentation, 'RGB', voi);
 }
 
 // RLE Lossless (transfer syntax 1.2.840.10008.1.2.5, PS3.5 Annex G). The
 // frame is split into up to 15 byte-plane "segments" (one per sample per
 // byte, most-significant byte first for >8-bit samples), each independently
 // run-length encoded, preceded by a 64-byte header of 4-byte LE offsets.
-function renderRleFrame(compressedFrame: Uint8Array, dataSet: dicomParser.DataSet, dicomFile: Buffer, rows: number, cols: number, samplesPerPixel: number, bitsAllocated: number, bitsStored: number, pixelRepresentation: number, photometricInterpretation: string): any {
+function renderRleFrame(compressedFrame: Uint8Array, dataSet: dicomParser.DataSet, dicomFile: Buffer, rows: number, cols: number, samplesPerPixel: number, bitsAllocated: number, bitsStored: number, pixelRepresentation: number, photometricInterpretation: string, voi?: VoiLutParams): any {
     if (bitsAllocated > 16) {
         throw new Error(`Unsupported bit allocation for RLE: ${bitsAllocated}`);
     }
@@ -492,7 +536,7 @@ function renderRleFrame(compressedFrame: Uint8Array, dataSet: dicomParser.DataSe
         renderPaletteColor(png, dataSet, dicomFile, indices, pixelCount);
     } else if (samplesPerPixel === 1) {
         const pixels = combineRleSampleBytes(segments, 0, bytesPerSample, pixelCount, pixelRepresentation, bitsStored);
-        renderGrayscale(png, pixels, pixelCount, pixelRepresentation, bitsStored, photometricInterpretation);
+        renderGrayscale(png, pixels, pixelCount, pixelRepresentation, bitsStored, photometricInterpretation, voi);
     } else if (samplesPerPixel === 3 && bytesPerSample === 1) {
         // RLE decompression is always planar-by-sample, regardless of the
         // file's PlanarConfiguration tag — reuse renderFullColor's planar
@@ -595,12 +639,31 @@ function decodeRLESegment(encoded: Uint8Array, expectedLength: number): Uint8Arr
     return out;
 }
 
-// MONOCHROME1/MONOCHROME2 — normalize to the actual min/max of the pixel
-// data (Phase 2 will honor WindowCenter/WindowWidth instead).
-function renderGrayscale(png: any, pixelArray: Uint8Array | Uint16Array | Int16Array, pixelCount: number, pixelRepresentation: number, bitsStored: number, photometricInterpretation: string) {
+// MONOCHROME1/MONOCHROME2. When the file provides WindowCenter/Width, uses
+// the real VOI LUT windowing formula (PS3.3 C.11.2.1.2.1's default LINEAR
+// function) on top of RescaleSlope/Intercept — this is what real viewers do,
+// and it's the only way displayed values are actual Hounsfield Units on CT.
+// Falls back to normalizing against the pixel data's own min/max, same as
+// before, when those tags are absent.
+function renderGrayscale(png: any, pixelArray: Uint8Array | Uint16Array | Int16Array, pixelCount: number, pixelRepresentation: number, bitsStored: number, photometricInterpretation: string, voi?: VoiLutParams) {
+    const validPixelCount = Math.min(pixelArray.length, pixelCount);
+    const invert = photometricInterpretation === 'MONOCHROME1';
+
+    if (voi && voi.windowCenter !== undefined && voi.windowWidth !== undefined) {
+        const { rescaleSlope, rescaleIntercept, windowCenter, windowWidth } = voi;
+        for (let i = 0; i < validPixelCount; i++) {
+            const rescaled = pixelArray[i] * rescaleSlope + rescaleIntercept;
+            let gray = applyLinearVoiLut(rescaled, windowCenter, windowWidth);
+            if (invert) {
+                gray = 255 - gray;
+            }
+            writeGrayscalePixel(png, i, gray);
+        }
+        return;
+    }
+
     let min = Number.MAX_SAFE_INTEGER;
     let max = Number.MIN_SAFE_INTEGER;
-    const validPixelCount = Math.min(pixelArray.length, pixelCount);
 
     for (let i = 0; i < validPixelCount; i++) {
         const pixel = pixelArray[i];
@@ -626,22 +689,44 @@ function renderGrayscale(png: any, pixelArray: Uint8Array | Uint16Array | Int16A
 
         let gray = Math.floor(normalizedPixel * 255);
 
-        // handle photometric interpretation
-        if (photometricInterpretation === 'MONOCHROME1') {
-            // invert for MONOCHROME1 (0 = white)
+        if (invert) {
             gray = 255 - gray;
         }
 
         // clamp to valid range
         gray = Math.max(0, Math.min(255, gray));
 
-        const idx = i * 4;
-        if (idx + 3 < png.data.length) {
-            png.data[idx] = gray;     // R
-            png.data[idx + 1] = gray; // G
-            png.data[idx + 2] = gray; // B
-            png.data[idx + 3] = 255;  // A
-        }
+        writeGrayscalePixel(png, i, gray);
+    }
+}
+
+// PS3.3 C.11.2.1.2.1 — the default ("LINEAR") VOI LUT function, mapping a
+// rescaled pixel value to an 8-bit display value given a window center/width.
+function applyLinearVoiLut(x: number, center: number, width: number): number {
+    // width <= 1 is a degenerate case not really covered by the standard
+    // formula (it would divide by zero) — treat it as a hard step at center.
+    if (width <= 1) {
+        return x <= center - 0.5 ? 0 : 255;
+    }
+
+    const low = center - 0.5 - (width - 1) / 2;
+    const high = center - 0.5 + (width - 1) / 2;
+    if (x <= low) {
+        return 0;
+    }
+    if (x > high) {
+        return 255;
+    }
+    return Math.round(((x - (center - 0.5)) / (width - 1) + 0.5) * 255);
+}
+
+function writeGrayscalePixel(png: any, pixelIndex: number, gray: number) {
+    const idx = pixelIndex * 4;
+    if (idx + 3 < png.data.length) {
+        png.data[idx] = gray;     // R
+        png.data[idx + 1] = gray; // G
+        png.data[idx + 2] = gray; // B
+        png.data[idx + 3] = 255;  // A
     }
 }
 
