@@ -5,10 +5,16 @@
   "version": "1.4.0",
   "publisher": "alarm",
   "icon": "media/images/logo.png",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/alaramartin/dicom-viewer.git"
   },
+  "bugs": {
+    "url": "https://github.com/alaramartin/dicom-viewer/issues"
+  },
+  "homepage": "https://github.com/alaramartin/dicom-viewer",
+  "qna": "https://github.com/alaramartin/dicom-viewer/issues",
   "engines": {
     "vscode": "^1.103.0"
   },
@@ -28,6 +34,32 @@
     "radiology",
     "pacs",
     "imaging"
+  ],
+  "galleryBanner": {
+    "color": "#1A1A2E",
+    "theme": "dark"
+  },
+  "badges": [
+    {
+      "url": "https://img.shields.io/visual-studio-marketplace/v/alarm.dicom-viewer",
+      "href": "https://marketplace.visualstudio.com/items?itemName=alarm.dicom-viewer",
+      "description": "Visual Studio Marketplace Version"
+    },
+    {
+      "url": "https://img.shields.io/visual-studio-marketplace/i/alarm.dicom-viewer",
+      "href": "https://marketplace.visualstudio.com/items?itemName=alarm.dicom-viewer",
+      "description": "Visual Studio Marketplace Installs"
+    },
+    {
+      "url": "https://img.shields.io/visual-studio-marketplace/r/alarm.dicom-viewer",
+      "href": "https://marketplace.visualstudio.com/items?itemName=alarm.dicom-viewer",
+      "description": "Visual Studio Marketplace Rating"
+    },
+    {
+      "url": "https://img.shields.io/github/license/alaramartin/dicom-viewer",
+      "href": "https://github.com/alaramartin/dicom-viewer/blob/main/LICENSE.md",
+      "description": "License: MIT"
+    }
   ],
   "activationEvents": [],
   "main": "./dist/extension.js",
