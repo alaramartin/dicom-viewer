@@ -2,6 +2,10 @@
 
 All notable changes to the "DICOM Viewer & Editor" extension are documented here.
 
+## [1.5.1] - 2026-08-20
+
+- Fixed a packaging bug in 1.5.0 that could ship a large, unnecessary source map file, undermining the size reduction below. `.vscodeignore`'s `*.map` rule wasn't matching nested paths like `dist/extension.js.map`; changed to `**/*.map`. Package size back down to ~850 KB.
+
 ## [1.5.0] - 2026-08-20
 
 A correctness- and security-focused release — no new features, but a long list of real bugs fixed, plus a much smaller package.
