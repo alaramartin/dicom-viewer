@@ -107,6 +107,8 @@
     "@iwharris/dicom-data-dictionary": "^1.26.0",
     "dcmjs": "^0.45.0",
     "dicom-parser": "^1.8.21",
+    "jpeg-js": "^0.4.4",
+    "jpeg-lossless-decoder-js": "^2.1.2",
     "pngjs": "^7.0.0"
   }
 }

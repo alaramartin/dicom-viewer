@@ -1,15 +1,34 @@
 import * as dicomParser from 'dicom-parser';
 import * as fs from 'fs';
+import * as jpeg from 'jpeg-js';
+import * as jpegLossless from 'jpeg-lossless-decoder-js';
 import { PNG } from 'pngjs';
 import { getLogger, describeError } from './logger';
 
-// Transfer syntaxes that carry raw, uncompressed pixel data. Anything else
-// (JPEG baseline/lossless, JPEG-LS, JPEG 2000, RLE, etc.) is compressed and
-// needs a codec we don't have yet — see Phase 2 in PLAN.md.
+// Transfer syntaxes that carry raw, uncompressed pixel data.
 const UNCOMPRESSED_TRANSFER_SYNTAXES = new Set([
     '1.2.840.10008.1.2',   // Implicit VR Little Endian
     '1.2.840.10008.1.2.1', // Explicit VR Little Endian
     '1.2.840.10008.1.2.2', // Explicit VR Big Endian (retired)
+]);
+
+// Compressed transfer syntaxes we can decode ourselves (pure JS, no WASM
+// build step yet — see PLAN.md for the ones still outstanding: JPEG-LS and
+// JPEG 2000. JPEG 2000 in particular needs a *full-precision* codec — the
+// only pure-JS decoder found (a PDF.js port) always clamps output to 8 bits,
+// which would silently corrupt the 12-16 bit CT/MR data JPEG 2000 is
+// actually used for in DICOM, so it was deliberately not wired up here).
+// Anything else still falls back to the read-only "compressed" path.
+const RLE_TRANSFER_SYNTAX = '1.2.840.10008.1.2.5';
+const JPEG_BASELINE_TRANSFER_SYNTAX = '1.2.840.10008.1.2.4.50'; // JPEG Baseline (Process 1), 8-bit only
+const JPEG_LOSSLESS_TRANSFER_SYNTAXES = new Set([
+    '1.2.840.10008.1.2.4.57', // JPEG Lossless, Non-Hierarchical (Process 14)
+    '1.2.840.10008.1.2.4.70', // JPEG Lossless, Non-Hierarchical, First-Order Prediction (Process 14 [SV1])
+]);
+const SUPPORTED_COMPRESSED_TRANSFER_SYNTAXES = new Set([
+    RLE_TRANSFER_SYNTAX,
+    JPEG_BASELINE_TRANSFER_SYNTAX,
+    ...JPEG_LOSSLESS_TRANSFER_SYNTAXES,
 ]);
 
 export function convertDicomToBase64(filepath: string): string {
@@ -39,53 +58,70 @@ export function convertDicomToBase64(filepath: string): string {
         // data length mismatch — a multi-frame uncompressed file has
         // pixelData.length = singleFrameLength * NumberOfFrames, which used to
         // fail the length check and get mislabeled "compressed".
-        if (transferSyntaxUID && !UNCOMPRESSED_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
+        const isUncompressed = !transferSyntaxUID || UNCOMPRESSED_TRANSFER_SYNTAXES.has(transferSyntaxUID);
+        const isSupportedCompressed = !!transferSyntaxUID && SUPPORTED_COMPRESSED_TRANSFER_SYNTAXES.has(transferSyntaxUID);
+        if (!isUncompressed && !isSupportedCompressed) {
             return "compressed";
         }
 
-        const isPalette = samplesPerPixel === 1 && photometricInterpretation === 'PALETTE COLOR';
-        // YBR_FULL_422 chroma-subsamples: every 2 pixels share one Cb/Cr pair,
-        // so it only takes 2 bytes/pixel on average instead of 3 (PS3.5 8.2.1).
-        const isSubsampled422 = samplesPerPixel === 3 && photometricInterpretation === 'YBR_FULL_422';
-        const isFullColor = samplesPerPixel === 3 && !isSubsampled422; // RGB, YBR_FULL, etc.
+        let png: any;
 
-        const bytesPerSample = Math.ceil(bitsAllocated / 8);
-        const bytesPerPixel = isSubsampled422 ? 2 * bytesPerSample : samplesPerPixel * bytesPerSample;
-        const singleFrameLength = rows * cols * bytesPerPixel;
-        const expectedLength = singleFrameLength * numberOfFrames;
-
-        if (expectedLength !== pixelData.length) {
-            // transfer syntax says uncompressed, but the header doesn't
-            // describe the data we actually got — a real problem, not
-            // something to silently paper over as "compressed".
-            throw new Error(`Pixel data length mismatch: expected ${expectedLength} bytes, got ${pixelData.length}`);
-        }
-
-        if (bitsAllocated > 16) {
-            throw new Error(`Unsupported bit allocation: ${bitsAllocated}`);
-        }
-
-        // only the first frame is decoded for now; multi-frame navigation is
-        // a Phase 2 feature
-        const frameByteLength = Math.min(pixelData.length, singleFrameLength);
-        const frameBytes: Uint8Array | Uint16Array | Int16Array = bitsAllocated <= 8
-            ? new Uint8Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, frameByteLength)
-            : pixelRepresentation === 1
-                ? new Int16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, Math.floor(frameByteLength / 2))
-                : new Uint16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, Math.floor(frameByteLength / 2));
-
-        // create PNG
-        const png = new PNG({ width: cols, height: rows });
-        const pixelCount = rows * cols;
-
-        if (isPalette) {
-            renderPaletteColor(png, dataSet, dicomFile, frameBytes, pixelCount);
-        } else if (isFullColor) {
-            renderFullColor(png, frameBytes as Uint8Array, pixelCount, samplesPerPixel, planarConfiguration, photometricInterpretation);
-        } else if (isSubsampled422) {
-            renderSubsampled422(png, frameBytes as Uint8Array, rows, cols);
+        if (isSupportedCompressed) {
+            // only the first frame is decoded for now; multi-frame
+            // navigation is a separate Phase 2 feature
+            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
+            if (transferSyntaxUID === JPEG_BASELINE_TRANSFER_SYNTAX) {
+                png = renderJpegBaselineFrame(compressedFrame, samplesPerPixel);
+            } else if (transferSyntaxUID && JPEG_LOSSLESS_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
+                png = renderJpegLosslessFrame(compressedFrame, pixelRepresentation, photometricInterpretation);
+            } else {
+                png = renderRleFrame(compressedFrame, dataSet, dicomFile, rows, cols, samplesPerPixel, bitsAllocated, bitsStored, pixelRepresentation, photometricInterpretation);
+            }
         } else {
-            renderGrayscale(png, frameBytes, pixelCount, pixelRepresentation, bitsStored, photometricInterpretation);
+            const isPalette = samplesPerPixel === 1 && photometricInterpretation === 'PALETTE COLOR';
+            // YBR_FULL_422 chroma-subsamples: every 2 pixels share one Cb/Cr pair,
+            // so it only takes 2 bytes/pixel on average instead of 3 (PS3.5 8.2.1).
+            const isSubsampled422 = samplesPerPixel === 3 && photometricInterpretation === 'YBR_FULL_422';
+            const isFullColor = samplesPerPixel === 3 && !isSubsampled422; // RGB, YBR_FULL, etc.
+
+            const bytesPerSample = Math.ceil(bitsAllocated / 8);
+            const bytesPerPixel = isSubsampled422 ? 2 * bytesPerSample : samplesPerPixel * bytesPerSample;
+            const singleFrameLength = rows * cols * bytesPerPixel;
+            const expectedLength = singleFrameLength * numberOfFrames;
+
+            if (expectedLength !== pixelData.length) {
+                // transfer syntax says uncompressed, but the header doesn't
+                // describe the data we actually got — a real problem, not
+                // something to silently paper over as "compressed".
+                throw new Error(`Pixel data length mismatch: expected ${expectedLength} bytes, got ${pixelData.length}`);
+            }
+
+            if (bitsAllocated > 16) {
+                throw new Error(`Unsupported bit allocation: ${bitsAllocated}`);
+            }
+
+            // only the first frame is decoded for now; multi-frame navigation is
+            // a Phase 2 feature
+            const frameByteLength = Math.min(pixelData.length, singleFrameLength);
+            const frameBytes: Uint8Array | Uint16Array | Int16Array = bitsAllocated <= 8
+                ? new Uint8Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, frameByteLength)
+                : pixelRepresentation === 1
+                    ? new Int16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, Math.floor(frameByteLength / 2))
+                    : new Uint16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, Math.floor(frameByteLength / 2));
+
+            // create PNG
+            png = new PNG({ width: cols, height: rows });
+            const pixelCount = rows * cols;
+
+            if (isPalette) {
+                renderPaletteColor(png, dataSet, dicomFile, frameBytes, pixelCount);
+            } else if (isFullColor) {
+                renderFullColor(png, frameBytes as Uint8Array, pixelCount, samplesPerPixel, planarConfiguration, photometricInterpretation);
+            } else if (isSubsampled422) {
+                renderSubsampled422(png, frameBytes as Uint8Array, rows, cols);
+            } else {
+                renderGrayscale(png, frameBytes, pixelCount, pixelRepresentation, bitsStored, photometricInterpretation);
+            }
         }
 
         // convert PNG to base64
@@ -99,6 +135,249 @@ export function convertDicomToBase64(filepath: string): string {
         getLogger().error(`DICOM image conversion failed (${type})`);
         throw new Error(`Failed to convert DICOM: ${message}`);
     }
+}
+
+// Pulls the compressed bytes for one frame out of encapsulated pixel data
+// (fragments framed by DICOM item tags, per PS3.5 A.4). Most encoders write
+// a Basic Offset Table mapping frame index -> fragment, which dicom-parser
+// already parses during parseDicom(); a few omit it (it's optional), in
+// which case we fall back to treating every fragment as belonging to the
+// single frame — correct for single-frame files, which covers the common
+// case since multi-frame decoding isn't implemented yet regardless.
+function getEncapsulatedFrameBytes(dataSet: dicomParser.DataSet, pixelDataElement: any, frameIndex: number): Uint8Array {
+    const basicOffsetTable: number[] | undefined = pixelDataElement.basicOffsetTable;
+    const fragments: Array<{ offset: number; position: number; length: number }> | undefined = pixelDataElement.fragments;
+
+    if (!fragments || fragments.length === 0) {
+        throw new Error('Encapsulated pixel data has no fragments');
+    }
+
+    if (basicOffsetTable && basicOffsetTable.length > 0) {
+        return dicomParser.readEncapsulatedImageFrame(dataSet, pixelDataElement, frameIndex);
+    }
+
+    if (frameIndex === 0) {
+        return dicomParser.readEncapsulatedPixelDataFromFragments(dataSet, pixelDataElement, 0, fragments.length, fragments);
+    }
+
+    throw new Error('Encapsulated pixel data has no Basic Offset Table and more than one frame — cannot locate frame boundaries');
+}
+
+// JPEG Baseline (Process 1, transfer syntax 1.2.840.10008.1.2.4.50) — 8-bit
+// only. jpeg-js performs the YCbCr->RGB color transform internally as part
+// of standard JPEG decoding, so its output is already RGB regardless of
+// what PhotometricInterpretation claims about the pre-compression source
+// data (e.g. YBR_FULL_422) — that tag describes the encoder's input, not
+// the decoder's output.
+function renderJpegBaselineFrame(compressedFrame: Uint8Array, samplesPerPixel: number): any {
+    let decoded;
+    try {
+        decoded = jpeg.decode(compressedFrame, { useTArray: true, formatAsRGBA: false, tolerantDecoding: true });
+    } catch {
+        throw new Error('Failed to decode JPEG Baseline pixel data');
+    }
+
+    const { width, height, data } = decoded; // always 3 interleaved bytes/pixel (formatAsRGBA: false)
+    const png = new PNG({ width, height });
+    const pixelCount = width * height;
+
+    if (samplesPerPixel === 1) {
+        // grayscale JPEG: jpeg-js replicates the single luma component into
+        // R/G/B, so any channel already holds the correct 0-255 gray value
+        for (let i = 0; i < pixelCount; i++) {
+            const gray = data[i * 3];
+            writeRgbPixel(png, i, gray, gray, gray);
+        }
+    } else {
+        for (let i = 0; i < pixelCount; i++) {
+            const idx = i * 3;
+            writeRgbPixel(png, i, data[idx], data[idx + 1], data[idx + 2]);
+        }
+    }
+
+    return png;
+}
+
+// JPEG Lossless, Process 14 / Process 14 SV1 (transfer syntaxes ...4.57 /
+// ...4.70). Predictive coding, not DCT-based — no color transform, and no
+// quantization, so (unlike JPEG Baseline/JPEG 2000) samples decode back to
+// their exact original values at whatever bit depth the file used, up to
+// 16-bit. jpeg-lossless-decoder-js derives width/height/component count/bit
+// depth from the JPEG stream itself, same trust-the-codestream approach as
+// the Baseline path above.
+function renderJpegLosslessFrame(compressedFrame: Uint8Array, pixelRepresentation: number, photometricInterpretation: string): any {
+    const decoder = new jpegLossless.Decoder();
+    const arrayBuffer = compressedFrame.buffer.slice(compressedFrame.byteOffset, compressedFrame.byteOffset + compressedFrame.length);
+
+    let outputData: Uint8Array | Uint16Array;
+    try {
+        outputData = decoder.decode(arrayBuffer, 0, arrayBuffer.byteLength);
+    } catch {
+        throw new Error('Failed to decode JPEG Lossless pixel data');
+    }
+
+    const { xDim: width, yDim: height, numComp, precision } = decoder;
+    if (precision > 16) {
+        throw new Error(`Unsupported JPEG Lossless precision: ${precision}`);
+    }
+
+    const png = new PNG({ width, height });
+    const pixelCount = width * height;
+
+    if (numComp === 3) {
+        // interleaved RGB (index*3 + component) — see setValueRGB in the
+        // decoder. A reversible color transform is possible in principle,
+        // so still respect PhotometricInterpretation the same way the
+        // uncompressed path does.
+        const isYbr = photometricInterpretation.startsWith('YBR');
+        for (let i = 0; i < pixelCount; i++) {
+            const idx = i * 3;
+            const s0 = outputData[idx], s1 = outputData[idx + 1], s2 = outputData[idx + 2];
+            const [r, g, b] = isYbr ? ybrToRgb(s0, s1, s2) : [s0, s1, s2];
+            writeRgbPixel(png, i, r, g, b);
+        }
+    } else {
+        let pixels: Uint8Array | Uint16Array | Int16Array = outputData;
+        if (pixelRepresentation === 1 && outputData instanceof Uint16Array) {
+            const signed = new Int16Array(pixelCount);
+            for (let i = 0; i < pixelCount; i++) {
+                signed[i] = (outputData[i] << 16) >> 16; // sign-extend from 16 bits
+            }
+            pixels = signed;
+        }
+        renderGrayscale(png, pixels, pixelCount, pixelRepresentation, precision, photometricInterpretation);
+    }
+
+    return png;
+}
+
+// RLE Lossless (transfer syntax 1.2.840.10008.1.2.5, PS3.5 Annex G). The
+// frame is split into up to 15 byte-plane "segments" (one per sample per
+// byte, most-significant byte first for >8-bit samples), each independently
+// run-length encoded, preceded by a 64-byte header of 4-byte LE offsets.
+function renderRleFrame(compressedFrame: Uint8Array, dataSet: dicomParser.DataSet, dicomFile: Buffer, rows: number, cols: number, samplesPerPixel: number, bitsAllocated: number, bitsStored: number, pixelRepresentation: number, photometricInterpretation: string): any {
+    if (bitsAllocated > 16) {
+        throw new Error(`Unsupported bit allocation for RLE: ${bitsAllocated}`);
+    }
+
+    const bytesPerSample = Math.ceil(bitsAllocated / 8);
+    const pixelCount = rows * cols;
+    const expectedSegments = samplesPerPixel * bytesPerSample;
+    const segments = decodeRLESegments(compressedFrame, pixelCount);
+
+    if (segments.length < expectedSegments) {
+        throw new Error(`RLE frame has ${segments.length} segment(s), expected ${expectedSegments} for ${samplesPerPixel} sample(s) at ${bitsAllocated}-bit`);
+    }
+
+    const png = new PNG({ width: cols, height: rows });
+    const isPalette = samplesPerPixel === 1 && photometricInterpretation.toUpperCase() === 'PALETTE COLOR';
+
+    if (isPalette) {
+        const indices = combineRleSampleBytes(segments, 0, bytesPerSample, pixelCount, 0, bitsStored);
+        renderPaletteColor(png, dataSet, dicomFile, indices, pixelCount);
+    } else if (samplesPerPixel === 1) {
+        const pixels = combineRleSampleBytes(segments, 0, bytesPerSample, pixelCount, pixelRepresentation, bitsStored);
+        renderGrayscale(png, pixels, pixelCount, pixelRepresentation, bitsStored, photometricInterpretation);
+    } else if (samplesPerPixel === 3 && bytesPerSample === 1) {
+        // RLE decompression is always planar-by-sample, regardless of the
+        // file's PlanarConfiguration tag — reuse renderFullColor's planar
+        // path (all of sample 0, then sample 1, then sample 2).
+        const bytes = new Uint8Array(pixelCount * 3);
+        bytes.set(segments[0], 0);
+        bytes.set(segments[1], pixelCount);
+        bytes.set(segments[2], pixelCount * 2);
+        renderFullColor(png, bytes, pixelCount, 3, 1, photometricInterpretation);
+    } else {
+        throw new Error(`Unsupported RLE pixel layout: ${samplesPerPixel} sample(s) at ${bitsAllocated}-bit`);
+    }
+
+    return png;
+}
+
+// Combines the 1 or 2 byte-plane segments for one sample into a pixel array,
+// matching the typed-array conventions renderGrayscale/renderPaletteColor
+// already expect from the uncompressed path.
+function combineRleSampleBytes(segments: Uint8Array[], sampleIndex: number, bytesPerSample: number, pixelCount: number, pixelRepresentation: number, bitsStored: number): Uint8Array | Uint16Array | Int16Array {
+    if (bytesPerSample === 1) {
+        return segments[sampleIndex];
+    }
+
+    // 16-bit: segment[2n] is the most-significant byte plane, segment[2n+1]
+    // is the least-significant byte plane (PS3.5 G.2).
+    const msb = segments[sampleIndex * 2];
+    const lsb = segments[sampleIndex * 2 + 1];
+
+    if (pixelRepresentation === 1) {
+        const out = new Int16Array(pixelCount);
+        for (let i = 0; i < pixelCount; i++) {
+            const combined = (msb[i] << 8) | lsb[i];
+            out[i] = (combined << 16) >> 16; // sign-extend from 16 bits
+        }
+        return out;
+    }
+
+    const out = new Uint16Array(pixelCount);
+    for (let i = 0; i < pixelCount; i++) {
+        out[i] = (msb[i] << 8) | lsb[i];
+    }
+    return out;
+}
+
+function decodeRLESegments(compressed: Uint8Array, expectedSegmentLength: number): Uint8Array[] {
+    if (compressed.length < 64) {
+        throw new Error('RLE frame is too short to contain a segment header');
+    }
+
+    const view = new DataView(compressed.buffer, compressed.byteOffset, compressed.length);
+    const numSegments = view.getUint32(0, true);
+    if (numSegments < 1 || numSegments > 15) {
+        throw new Error(`RLE segment header declares an invalid segment count: ${numSegments}`);
+    }
+
+    const offsets: number[] = [];
+    for (let i = 0; i < numSegments; i++) {
+        offsets.push(view.getUint32((i + 1) * 4, true));
+    }
+
+    const segments: Uint8Array[] = [];
+    for (let s = 0; s < numSegments; s++) {
+        const start = offsets[s];
+        const end = s + 1 < numSegments ? offsets[s + 1] : compressed.length;
+        if (start > end || end > compressed.length) {
+            throw new Error(`RLE segment ${s} has an invalid offset`);
+        }
+        segments.push(decodeRLESegment(compressed.subarray(start, end), expectedSegmentLength));
+    }
+    return segments;
+}
+
+// PS3.5 Annex G control-byte scheme: 0..127 -> copy (n+1) literal bytes;
+// 129..255 -> repeat the next byte (257-n) times; 128 -> no-op.
+function decodeRLESegment(encoded: Uint8Array, expectedLength: number): Uint8Array {
+    const out = new Uint8Array(expectedLength);
+    let outPos = 0;
+    let i = 0;
+
+    while (i < encoded.length && outPos < expectedLength) {
+        const control = encoded[i++];
+        if (control <= 127) {
+            const count = control + 1;
+            for (let n = 0; n < count && i < encoded.length && outPos < expectedLength; n++) {
+                out[outPos++] = encoded[i++];
+            }
+        } else if (control > 128) {
+            const count = 257 - control;
+            if (i < encoded.length) {
+                const value = encoded[i++];
+                for (let n = 0; n < count && outPos < expectedLength; n++) {
+                    out[outPos++] = value;
+                }
+            }
+        }
+        // control === 128 is defined as a no-op
+    }
+
+    return out;
 }
 
 // MONOCHROME1/MONOCHROME2 — normalize to the actual min/max of the pixel
