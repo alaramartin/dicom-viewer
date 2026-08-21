@@ -280,69 +280,6 @@ function clamp8(value: number): number {
     return Math.max(0, Math.min(255, Math.round(value)));
 }
 
-// export function getMetadata(filepath: string): Array<any> {
-//     let metadata = [["Hex Tag", "Tag Name", "VR", "Value"]];
-//     const dictionary = require('@iwharris/dicom-data-dictionary');
-//     try {
-//         const dicomFile = fs.readFileSync(filepath);
-//         const dataSet = dicomParser.parseDicom(dicomFile);
-
-//         for (const tag in dataSet.elements) {
-//             if (dataSet.elements.hasOwnProperty(tag)) {
-//                 // get the info of the tag itself
-//                 let tagName = 'Unknown';
-//                 let vr = 'UN';
-//                 let cleanTag = tag.replace('x', '').toUpperCase();
-//                 const element = dataSet.elements[tag];
-
-//                 try {
-//                     const elem = dictionary.get_element(cleanTag);
-//                     tagName = elem["name"];
-//                     vr = elem["vr"];
-//                 }
-//                 catch {
-//                     // ignore the error, it's just iwharris not finding the vr
-//                 }
-                
-//                 // use the VR from the element if available, otherwise use our lookup
-//                 let finalVr = element.vr || vr;
-//                 finalVr = normalizeVR(finalVr);
-                
-//                 let value = '';
-
-//                 // handle different vr types
-//                 if (element.items && finalVr === 'SQ') {
-//                     // add the sequence header row to the table
-//                     metadata.push([tag, tagName, finalVr, `[Sequence - ${element.items.length} items]`, 'sequence-header']);
-
-//                     // handle every item in the sequence
-//                     element.items.forEach((item: any, itemIndex: number) => {
-//                         metadata.push([
-//                             `${tag}_item_${itemIndex}`,
-//                             `Item #${itemIndex}`,
-//                             `Length: ${item.length}$item.hadUndefinedLength ? ' (-1)' : ''`,
-//                             'sequence-item-header',
-//                             tag
-//                         ]);
-
-//                         if (item.dataSet) { 
-//                             const itemMetadata = processElement(item.dataSet, dictionary, `${tag}_item_${itemIndex}`);
-//                             metadata = metadata.concat(itemMetadata);
-//                         }
-//                     });
-//                     continue;
-//                 } else {
-//                     value = getTagValue(dataSet, tag, finalVr);
-//                 }
-//                 metadata.push([tag, tagName, finalVr, value]);
-//             }
-//         }
-//     } catch (ex) {
-//         console.error('Error parsing DICOM', ex);
-//     }
-//     return metadata;
-// }
-
 export function getMetadata(filepath: string): Array<any> {
     let metadata = [["Hex Tag", "Tag Name", "VR", "Value"]];
     const dictionary = require('@iwharris/dicom-data-dictionary');

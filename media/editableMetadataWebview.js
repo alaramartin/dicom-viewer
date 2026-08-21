@@ -16,7 +16,6 @@ let buttonRow = null;
 let pendingEdits = {};
 let pendingRemovals = new Set();
 let hasChanges = false;
-let isDicomInvalid = false;
 
 // the true original value of each editable tag, captured once when the
 // panel loads — used to detect when an edit is reverted back to it
@@ -125,7 +124,6 @@ function markChanged(invalidated) {
     hasChanges = true;
     if (invalidated) {
         addInvalidatedWarnings();
-        isDicomInvalid = true;
     }
     showDicomActions(true);
 }
@@ -136,7 +134,6 @@ function markChanged(invalidated) {
 function updateActionBarState() {
     hasChanges = Object.keys(pendingEdits).length > 0 || pendingRemovals.size > 0;
     if (!hasChanges) {
-        isDicomInvalid = false;
         removeInvalidatedWarnings();
     }
     showDicomActions(hasChanges);
@@ -365,102 +362,14 @@ document.addEventListener("DOMContentLoaded", function() {
             removeButtonsRow();
         }
         if (e.key === "Enter" && currentEditingCell) {
-            edited = true;
-            const newValue = currentEditingCell.textContent;
-            // check if the value changed at all
-            if (newValue !== ogValue && editable) {
-                // get the dicom tag of the currenteditingcell (first column)
-                const hexTag = getHexTag(currentEditingCell);
-                const VR = getVR(currentEditingCell);
-                const info = getSequenceInfo(currentEditingCell);
-                
-                // store the raw value for DICOM, not the formatted display value
-                let rawValue = newValue;
-                if (VR === "DA" && newValue.includes("/")) {
-                    // convert formatted date
-                    rawValue = newValue.replace(/\//g, "");
-                }
-
-                if (isRevertedToOriginal(hexTag, rawValue)) {
-                    // edited back to its original value — drop the pending
-                    // edit instead of leaving the file marked dirty
-                    delete pendingEdits[hexTag];
-                    updateActionBarState();
-                } else {
-                    // store edit, don't send to extension yet
-                    if (info.isSequenceElement) {
-                        pendingEdits[hexTag] = {
-                            vr: VR,
-                            value: rawValue,
-                            isSequenceElement: true,
-                            sequenceTag: info.sequenceTag,
-                            itemIndex: info.itemIndex,
-                            elementTag: info.elementTag
-                        };
-                    } else {
-                        pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
-                    }
-                    // if the tag was required but still edited, mark as potentially invalidated
-                    markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
-                }
-                notifyPendingChanged();
-            }
-            else if (!editable) {
-                currentEditingCell.textContent = ogValue;
-            }
-            removeButtonsRow();
-            currentEditingCell.blur();
+            commitCurrentEdit();
         }
     });
 
     // listen to button presses (save/cancel/remove row, save dicoms)
     document.addEventListener("click", function(e) {
         if (e.target.classList.contains("save-edits")) {
-            edited = true;
-            const newValue = currentEditingCell.textContent;
-            // check if the value changed at all
-            if (newValue !== ogValue && editable) {
-                // get the dicom tag of the currenteditingcell (first column)
-                const hexTag = getHexTag(currentEditingCell);
-                const VR = getVR(currentEditingCell);
-                const info = getSequenceInfo(currentEditingCell);
-                
-                // store the raw value for DICOM, not the formatted display value
-                let rawValue = newValue;
-                if (VR === "DA" && newValue.includes("/")) {
-                    // convert formatted date
-                    rawValue = newValue.replace(/\//g, "");
-                }
-
-                if (isRevertedToOriginal(hexTag, rawValue)) {
-                    // edited back to its original value — drop the pending
-                    // edit instead of leaving the file marked dirty
-                    delete pendingEdits[hexTag];
-                    updateActionBarState();
-                } else {
-                    // store edit, don't send to extension yet
-                    if (info.isSequenceElement) {
-                        pendingEdits[hexTag] = {
-                            vr: VR,
-                            value: rawValue,
-                            isSequenceElement: true,
-                            sequenceTag: info.sequenceTag,
-                            itemIndex: info.itemIndex,
-                            elementTag: info.elementTag
-                        };
-                    } else {
-                        pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
-                    }
-                    // if the tag was required but still edited, mark as potentially invalidated
-                    markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
-                }
-                notifyPendingChanged();
-            }
-            else if (!editable) {
-                currentEditingCell.textContent = ogValue;
-            }
-            removeButtonsRow();
-            currentEditingCell.blur();
+            commitCurrentEdit();
         }
         // check for "remove row" button
         else if (e.target.classList.contains("remove-row")) {
@@ -567,6 +476,58 @@ document.addEventListener("DOMContentLoaded", function() {
             }
         }
     });
+
+    // commit whatever's in the currently-editing cell as a pending edit (or
+    // drop it if it's been edited back to its original value), then close
+    // out the edit. Shared by the Enter key and the Save button — the only
+    // difference between the two trigger paths is what fires this.
+    function commitCurrentEdit() {
+        edited = true;
+        const newValue = currentEditingCell.textContent;
+        // check if the value changed at all
+        if (newValue !== ogValue && editable) {
+            // get the dicom tag of the currenteditingcell (first column)
+            const hexTag = getHexTag(currentEditingCell);
+            const VR = getVR(currentEditingCell);
+            const info = getSequenceInfo(currentEditingCell);
+
+            // store the raw value for DICOM, not the formatted display value
+            let rawValue = newValue;
+            if (VR === "DA" && newValue.includes("/")) {
+                // convert formatted date
+                rawValue = newValue.replace(/\//g, "");
+            }
+
+            if (isRevertedToOriginal(hexTag, rawValue)) {
+                // edited back to its original value — drop the pending
+                // edit instead of leaving the file marked dirty
+                delete pendingEdits[hexTag];
+                updateActionBarState();
+            } else {
+                // store edit, don't send to extension yet
+                if (info.isSequenceElement) {
+                    pendingEdits[hexTag] = {
+                        vr: VR,
+                        value: rawValue,
+                        isSequenceElement: true,
+                        sequenceTag: info.sequenceTag,
+                        itemIndex: info.itemIndex,
+                        elementTag: info.elementTag
+                    };
+                } else {
+                    pendingEdits[hexTag] = { vr: VR, value: rawValue, tag: hexTag, isSequenceElement: false };
+                }
+                // if the tag was required but still edited, mark as potentially invalidated
+                markChanged((isTagRequired(hexTag, currentEditingCell) === "require"));
+            }
+            notifyPendingChanged();
+        }
+        else if (!editable) {
+            currentEditingCell.textContent = ogValue;
+        }
+        removeButtonsRow();
+        currentEditingCell.blur();
+    }
 
     // add a row below the editing row that displays 3 button options
     function createButtonsRow(cell) {
