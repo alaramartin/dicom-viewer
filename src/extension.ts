@@ -53,7 +53,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			// get the image in base64 and display in webview
 			let base64Image: string;
 			try {
-				base64Image = convertDicomToBase64(filepath);
+				base64Image = await convertDicomToBase64(filepath);
 			} catch (e) {
 				// convertDicomToBase64 already logged the error type; an uncaught
 				// throw here rejects resolveCustomEditor's promise and crashes the

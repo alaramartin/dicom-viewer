@@ -12,26 +12,63 @@ const UNCOMPRESSED_TRANSFER_SYNTAXES = new Set([
     '1.2.840.10008.1.2.2', // Explicit VR Big Endian (retired)
 ]);
 
-// Compressed transfer syntaxes we can decode ourselves (pure JS, no WASM
-// build step yet — see PLAN.md for the ones still outstanding: JPEG-LS and
-// JPEG 2000. JPEG 2000 in particular needs a *full-precision* codec — the
-// only pure-JS decoder found (a PDF.js port) always clamps output to 8 bits,
-// which would silently corrupt the 12-16 bit CT/MR data JPEG 2000 is
-// actually used for in DICOM, so it was deliberately not wired up here).
-// Anything else still falls back to the read-only "compressed" path.
+// Compressed transfer syntaxes we can decode ourselves. RLE/JPEG Baseline/
+// JPEG Lossless are pure JS (see the render functions below). JPEG-LS and
+// JPEG 2000 use Cornerstone's WASM codecs (@cornerstonejs/codec-charls,
+// -codec-openjpeg) — self-contained decode-only builds with the .wasm
+// inlined as base64 in the JS glue, so no extra asset-copy build step is
+// needed, but their module factories are async, which is why this function
+// is async. An earlier pure-JS JPEG 2000 decoder was evaluated and rejected
+// because it silently clamped output to 8 bits regardless of source
+// precision; these WASM builds report true per-file bit depth via
+// getFrameInfo() and don't have that problem.
+// Anything still outside this set falls back to the read-only "compressed" path.
 const RLE_TRANSFER_SYNTAX = '1.2.840.10008.1.2.5';
 const JPEG_BASELINE_TRANSFER_SYNTAX = '1.2.840.10008.1.2.4.50'; // JPEG Baseline (Process 1), 8-bit only
 const JPEG_LOSSLESS_TRANSFER_SYNTAXES = new Set([
     '1.2.840.10008.1.2.4.57', // JPEG Lossless, Non-Hierarchical (Process 14)
     '1.2.840.10008.1.2.4.70', // JPEG Lossless, Non-Hierarchical, First-Order Prediction (Process 14 [SV1])
 ]);
+const JPEG_LS_TRANSFER_SYNTAXES = new Set([
+    '1.2.840.10008.1.2.4.80', // JPEG-LS Lossless
+    '1.2.840.10008.1.2.4.81', // JPEG-LS Lossy (Near-Lossless)
+]);
+const JPEG_2000_TRANSFER_SYNTAXES = new Set([
+    '1.2.840.10008.1.2.4.90', // JPEG 2000 Lossless Only
+    '1.2.840.10008.1.2.4.91', // JPEG 2000 (lossy allowed)
+]);
 const SUPPORTED_COMPRESSED_TRANSFER_SYNTAXES = new Set([
     RLE_TRANSFER_SYNTAX,
     JPEG_BASELINE_TRANSFER_SYNTAX,
     ...JPEG_LOSSLESS_TRANSFER_SYNTAXES,
+    ...JPEG_LS_TRANSFER_SYNTAXES,
+    ...JPEG_2000_TRANSFER_SYNTAXES,
 ]);
 
-export function convertDicomToBase64(filepath: string): string {
+// The WASM codec module factories (from the packages' "/decode" subpath
+// exports) are plain CJS functions with no shipped types, same story as
+// jpeg-lossless-decoder-js — loaded via require() rather than import, and
+// instantiated (async) once per extension host lifetime, then reused, since
+// each instantiation compiles a WASM module.
+let openjpegModulePromise: Promise<any> | undefined;
+function getOpenJpegModule(): Promise<any> {
+    if (!openjpegModulePromise) {
+        const factory = require('@cornerstonejs/codec-openjpeg/decode');
+        openjpegModulePromise = factory();
+    }
+    return openjpegModulePromise as Promise<any>;
+}
+
+let charlsModulePromise: Promise<any> | undefined;
+function getCharlsModule(): Promise<any> {
+    if (!charlsModulePromise) {
+        const factory = require('@cornerstonejs/codec-charls/decode');
+        charlsModulePromise = factory();
+    }
+    return charlsModulePromise as Promise<any>;
+}
+
+export async function convertDicomToBase64(filepath: string): Promise<string> {
     try {
         // get the dicom file and its metadata
         const dicomFile = fs.readFileSync(filepath);
@@ -74,6 +111,10 @@ export function convertDicomToBase64(filepath: string): string {
                 png = renderJpegBaselineFrame(compressedFrame, samplesPerPixel);
             } else if (transferSyntaxUID && JPEG_LOSSLESS_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
                 png = renderJpegLosslessFrame(compressedFrame, pixelRepresentation, photometricInterpretation);
+            } else if (transferSyntaxUID && JPEG_LS_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
+                png = await renderJpegLSFrame(compressedFrame, pixelRepresentation);
+            } else if (transferSyntaxUID && JPEG_2000_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
+                png = await renderJpeg2000Frame(compressedFrame, pixelRepresentation);
             } else {
                 png = renderRleFrame(compressedFrame, dataSet, dicomFile, rows, cols, samplesPerPixel, bitsAllocated, bitsStored, pixelRepresentation, photometricInterpretation);
             }
@@ -249,6 +290,126 @@ function renderJpegLosslessFrame(compressedFrame: Uint8Array, pixelRepresentatio
     }
 
     return png;
+}
+
+// Shared decode step for both WASM codecs below — they expose the same
+// embind API shape (getEncodedBuffer/decode/getFrameInfo/getDecodedBuffer),
+// just under different class names. getDecodedBuffer() returns a
+// Uint8ClampedArray, but that's just a generic byte view into the WASM
+// heap — frameInfo.bitsPerSample tells us the *actual* sample width, so
+// >8-bit output is reinterpreted into a proper Uint16Array below rather
+// than truncated.
+interface DecodedFrame {
+    width: number;
+    height: number;
+    componentCount: number;
+    bitsPerSample: number;
+    isSigned?: boolean;
+    pixels: Uint8Array | Uint16Array;
+}
+
+function decodeWithEmbindCodec(module: any, DecoderCtor: new () => any, compressedFrame: Uint8Array): DecodedFrame {
+    const decoder = new DecoderCtor();
+    try {
+        const encodedBuffer = decoder.getEncodedBuffer(compressedFrame.length);
+        encodedBuffer.set(compressedFrame);
+        decoder.decode();
+
+        const frameInfo = decoder.getFrameInfo();
+        const decoded: Uint8Array = decoder.getDecodedBuffer();
+        const pixelCount = frameInfo.width * frameInfo.height * frameInfo.componentCount;
+
+        const pixels = frameInfo.bitsPerSample > 8
+            ? new Uint16Array(decoded.buffer, decoded.byteOffset, pixelCount)
+            : new Uint8Array(decoded.buffer, decoded.byteOffset, pixelCount);
+
+        return {
+            width: frameInfo.width,
+            height: frameInfo.height,
+            componentCount: frameInfo.componentCount,
+            bitsPerSample: frameInfo.bitsPerSample,
+            isSigned: frameInfo.isSigned,
+            pixels,
+        };
+    } finally {
+        // embind instances hold WASM heap memory (RAII) — must be released
+        // explicitly, JS garbage collection won't do it.
+        decoder.delete?.();
+    }
+}
+
+// Writes a decoded WASM-codec frame (grayscale or interleaved-RGB, already
+// resolved to the right typed array width) into a PNG, reusing the same
+// renderers the other compressed paths use.
+function renderDecodedFrame(frame: DecodedFrame, pixelRepresentation: number, photometricInterpretation: string): any {
+    const png = new PNG({ width: frame.width, height: frame.height });
+    const pixelCount = frame.width * frame.height;
+
+    if (frame.componentCount === 3) {
+        for (let i = 0; i < pixelCount; i++) {
+            const idx = i * 3;
+            writeRgbPixel(png, i, frame.pixels[idx], frame.pixels[idx + 1], frame.pixels[idx + 2]);
+        }
+        return png;
+    }
+
+    // grayscale — the codec's own isSigned (when it reports one) takes
+    // priority over the DICOM header's PixelRepresentation, since it
+    // reflects what's actually embedded in the codestream.
+    const isSigned = frame.isSigned ?? (pixelRepresentation === 1);
+    let pixels: Uint8Array | Uint16Array | Int16Array = frame.pixels;
+    if (isSigned && frame.pixels instanceof Uint16Array) {
+        const signed = new Int16Array(pixelCount);
+        for (let i = 0; i < pixelCount; i++) {
+            signed[i] = (frame.pixels[i] << 16) >> 16; // sign-extend from 16 bits
+        }
+        pixels = signed;
+    }
+    renderGrayscale(png, pixels, pixelCount, isSigned ? 1 : 0, frame.bitsPerSample, photometricInterpretation);
+    return png;
+}
+
+// JPEG 2000 (transfer syntaxes ...4.90 lossless-only / ...4.91 lossy-allowed)
+// via @cornerstonejs/codec-openjpeg's WASM build of OpenJPEG.
+async function renderJpeg2000Frame(compressedFrame: Uint8Array, pixelRepresentation: number): Promise<any> {
+    let openjpeg;
+    try {
+        openjpeg = await getOpenJpegModule();
+    } catch {
+        throw new Error('Failed to load the JPEG 2000 decoder');
+    }
+
+    let frame: DecodedFrame;
+    try {
+        frame = decodeWithEmbindCodec(openjpeg, openjpeg.J2KDecoder, compressedFrame);
+    } catch {
+        throw new Error('Failed to decode JPEG 2000 pixel data');
+    }
+
+    // J2K's internal color transform (when present) is applied by the
+    // decoder itself, so 3-component output is already RGB — no separate
+    // YCbCr conversion needed here, same as the JPEG Baseline path.
+    return renderDecodedFrame(frame, pixelRepresentation, 'RGB');
+}
+
+// JPEG-LS (transfer syntaxes ...4.80 lossless / ...4.81 near-lossless) via
+// @cornerstonejs/codec-charls's WASM build of CharLS.
+async function renderJpegLSFrame(compressedFrame: Uint8Array, pixelRepresentation: number): Promise<any> {
+    let charls;
+    try {
+        charls = await getCharlsModule();
+    } catch {
+        throw new Error('Failed to load the JPEG-LS decoder');
+    }
+
+    let frame: DecodedFrame;
+    try {
+        frame = decodeWithEmbindCodec(charls, charls.JpegLSDecoder, compressedFrame);
+    } catch {
+        throw new Error('Failed to decode JPEG-LS pixel data');
+    }
+
+    return renderDecodedFrame(frame, pixelRepresentation, 'RGB');
 }
 
 // RLE Lossless (transfer syntax 1.2.840.10008.1.2.5, PS3.5 Annex G). The

@@ -2,6 +2,14 @@
 
 All notable changes to the "DICOM Viewer & Editor" extension are documented here.
 
+## [1.6.0] - 2026-08-21
+
+**The single most-requested feature: compressed DICOMs now display and are fully editable.** Previously any compressed file hit a read-only "not supported" page — this covered a large share of real-world clinical/research exports.
+
+- Added support for RLE Lossless, JPEG Baseline, JPEG Lossless, JPEG-LS, and JPEG 2000 compressed transfer syntaxes. These files now render correctly and can be edited and saved like any uncompressed DICOM.
+- JPEG-LS and JPEG 2000 decoding preserves full source bit depth (up to 16-bit) — no precision loss on CT/MR data.
+- A small number of transfer syntaxes outside these 5 (private or retired ones) still fall back to the previous read-only page rather than failing outright.
+
 ## [1.5.1] - 2026-08-20
 
 - Fixed a packaging bug in 1.5.0 that could ship a large, unnecessary source map file, undermining the size reduction below. `.vscodeignore`'s `*.map` rule wasn't matching nested paths like `dist/extension.js.map`; changed to `**/*.map`. Package size back down to ~850 KB.
