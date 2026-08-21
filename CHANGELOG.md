@@ -2,6 +2,31 @@
 
 All notable changes to the "DICOM Viewer & Editor" extension are documented here.
 
+## [1.5.0] - 2026-08-20
+
+A correctness- and security-focused release — no new features, but a long list of real bugs fixed, plus a much smaller package.
+
+**Fixes:**
+
+- Fixed data loss when saving multiple metadata edits in one go — previously only the last edit was kept.
+- Fixed a cross-site scripting (XSS) vulnerability in the metadata panel: a crafted `.dcm` file could run arbitrary script.
+- Stopped potentially logging patient data to the output console on parse/save errors.
+- Fixed multi-frame DICOM files being incorrectly reported as "compressed" and refused.
+- Fixed color images (ultrasound, endoscopy, secondary capture, etc.) rendering as garbled grayscale instead of color.
+- Fixed several numeric tags (`Rows`, `Columns`, `BitsAllocated`, and others) showing blank or garbled values in the metadata table.
+- Fixed tag names with apostrophes (e.g. "Referring Physician's Name") displaying a literal `&#x27;` instead of `'`.
+- Fixed the metadata table being unreadable in light color themes.
+- Fixed edits that were typed and then manually undone still marking the file as changed.
+- Fixed empty cells losing their "[Empty]" label when clicked into and then clicked away from without editing.
+- Fixed unsaved edits being silently discarded when switching away from the image tab and back.
+
+**Packaging:**
+
+- Cut the installed extension size from 15–21 MB down to well under 1 MB by bundling and no longer shipping `node_modules` wholesale.
+- Removed unused dependencies.
+- Stopped the extension activating on every VS Code launch — it now only activates when you open a `.dcm` file, as intended.
+- Filled in Marketplace listing metadata (license, issue tracker link, homepage).
+
 ## [1.4.0] - 2026-05-31
 
 No functional changes. README updates only.
