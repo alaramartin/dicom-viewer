@@ -25,6 +25,15 @@ const UNCOMPRESSED_TRANSFER_SYNTAXES = new Set([
 // Anything still outside this set falls back to the read-only "compressed" path.
 const RLE_TRANSFER_SYNTAX = '1.2.840.10008.1.2.5';
 const JPEG_BASELINE_TRANSFER_SYNTAX = '1.2.840.10008.1.2.4.50'; // JPEG Baseline (Process 1), 8-bit only
+// JPEG Extended (Process 2 & 4) can carry either 8-bit or 12-bit samples.
+// jpeg-js (used for Baseline above) hardcodes 8-bit output — no 12-bit JPEG
+// decoder exists in the npm ecosystem at all, confirmed by checking
+// Cornerstone's own reference codec set (@cornerstonejs/dicom-codec), which
+// only ships an "-8bit" libjpeg-turbo build. So this transfer syntax is only
+// safe to decode when the embedded codestream (not just the DICOM header)
+// says 8-bit; see readJpegPrecision() and its call site below. 12-bit files
+// fall back to the read-only "compressed" path rather than being truncated.
+const JPEG_EXTENDED_TRANSFER_SYNTAX = '1.2.840.10008.1.2.4.51';
 const JPEG_LOSSLESS_TRANSFER_SYNTAXES = new Set([
     '1.2.840.10008.1.2.4.57', // JPEG Lossless, Non-Hierarchical (Process 14)
     '1.2.840.10008.1.2.4.70', // JPEG Lossless, Non-Hierarchical, First-Order Prediction (Process 14 [SV1])
@@ -40,6 +49,7 @@ const JPEG_2000_TRANSFER_SYNTAXES = new Set([
 const SUPPORTED_COMPRESSED_TRANSFER_SYNTAXES = new Set([
     RLE_TRANSFER_SYNTAX,
     JPEG_BASELINE_TRANSFER_SYNTAX,
+    JPEG_EXTENDED_TRANSFER_SYNTAX,
     ...JPEG_LOSSLESS_TRANSFER_SYNTAXES,
     ...JPEG_LS_TRANSFER_SYNTAXES,
     ...JPEG_2000_TRANSFER_SYNTAXES,
@@ -108,6 +118,15 @@ export async function convertDicomToBase64(filepath: string): Promise<string> {
             // navigation is a separate Phase 2 feature
             const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
             if (transferSyntaxUID === JPEG_BASELINE_TRANSFER_SYNTAX) {
+                png = renderJpegBaselineFrame(compressedFrame, samplesPerPixel);
+            } else if (transferSyntaxUID === JPEG_EXTENDED_TRANSFER_SYNTAX) {
+                // only 8-bit JPEG Extended is decodable (see the constant's
+                // comment above) — bail out to the same "compressed" fallback
+                // used for genuinely unsupported syntaxes rather than risk
+                // truncating a 12-bit file.
+                if (readJpegPrecision(compressedFrame) !== 8) {
+                    return "compressed";
+                }
                 png = renderJpegBaselineFrame(compressedFrame, samplesPerPixel);
             } else if (transferSyntaxUID && JPEG_LOSSLESS_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
                 png = renderJpegLosslessFrame(compressedFrame, pixelRepresentation, photometricInterpretation);
@@ -202,6 +221,41 @@ function getEncapsulatedFrameBytes(dataSet: dicomParser.DataSet, pixelDataElemen
     }
 
     throw new Error('Encapsulated pixel data has no Basic Offset Table and more than one frame — cannot locate frame boundaries');
+}
+
+// Reads the sample precision straight out of a raw JPEG codestream's
+// Start-Of-Frame marker (SOF0-SOF15, except the DHT/JPG/DAC marker codes
+// that share the 0xC0-0xCF range), without doing a full JPEG parse. Used to
+// gate JPEG Extended decoding to the 8-bit case jpeg-js can actually handle
+// correctly — see JPEG_EXTENDED_TRANSFER_SYNTAX's comment above.
+function readJpegPrecision(bytes: Uint8Array): number | undefined {
+    if (bytes.length < 4 || bytes[0] !== 0xFF || bytes[1] !== 0xD8) {
+        return undefined; // missing Start Of Image marker — not a JPEG stream
+    }
+
+    let i = 2;
+    while (i + 4 <= bytes.length) {
+        if (bytes[i] !== 0xFF) {
+            i++;
+            continue;
+        }
+        const marker = bytes[i + 1];
+        // markers with no length/payload — skip past just the marker itself
+        if (marker === 0x00 || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD9)) {
+            i += 2;
+            continue;
+        }
+        const length = (bytes[i + 2] << 8) | bytes[i + 3];
+        const isSofMarker = marker >= 0xC0 && marker <= 0xCF && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC;
+        if (isSofMarker) {
+            return i + 4 < bytes.length ? bytes[i + 4] : undefined; // precision byte follows the length field
+        }
+        if (marker === 0xDA) {
+            return undefined; // hit Start Of Scan without finding a SOF marker
+        }
+        i += 2 + length;
+    }
+    return undefined;
 }
 
 // JPEG Baseline (Process 1, transfer syntax 1.2.840.10008.1.2.4.50) — 8-bit

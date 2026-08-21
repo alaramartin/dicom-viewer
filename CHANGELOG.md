@@ -6,9 +6,9 @@ All notable changes to the "DICOM Viewer & Editor" extension are documented here
 
 **The single most-requested feature: compressed DICOMs now display and are fully editable.** Previously any compressed file hit a read-only "not supported" page — this covered a large share of real-world clinical/research exports.
 
-- Added support for RLE Lossless, JPEG Baseline, JPEG Lossless, JPEG-LS, and JPEG 2000 compressed transfer syntaxes. These files now render correctly and can be edited and saved like any uncompressed DICOM.
+- Added support for RLE Lossless, JPEG Baseline, JPEG Extended (8-bit), JPEG Lossless, JPEG-LS, and JPEG 2000 compressed transfer syntaxes. These files now render correctly and can be edited and saved like any uncompressed DICOM.
 - JPEG-LS and JPEG 2000 decoding preserves full source bit depth (up to 16-bit) — no precision loss on CT/MR data.
-- A small number of transfer syntaxes outside these 5 (private or retired ones) still fall back to the previous read-only page rather than failing outright.
+- A small number of transfer syntaxes outside these (private/retired ones, or 12-bit JPEG Extended specifically — no full-precision decoder exists for that one yet) still fall back to the previous read-only page rather than failing outright or losing precision.
 
 ## [1.5.1] - 2026-08-20
 

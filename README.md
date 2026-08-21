@@ -12,7 +12,7 @@ Available on [VS Code Marketplace](https://marketplace.visualstudio.com/items?it
     - Choose to update current file or create new file with changes
 - **Easy to use**: Activates as soon as you click on a .dcm file
 - **Sequences**: Supports sequence elements (viewing and editing)
-- **Compressed images**: Displays and edits DICOMs compressed with RLE Lossless, JPEG Baseline, JPEG Lossless, JPEG-LS, and JPEG 2000 — the full pixel data is decoded, not just the metadata
+- **Compressed images**: Displays and edits DICOMs compressed with RLE Lossless, JPEG Baseline, JPEG Extended (8-bit), JPEG Lossless, JPEG-LS, and JPEG 2000 — the full pixel data is decoded, not just the metadata
 
 ### Examples
 
@@ -23,7 +23,7 @@ Editing:
 ![example2](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/images/example-dicom-edit.png)
 ![example3](https://raw.githubusercontent.com/alaramartin/dicom-viewer/refs/heads/main/media/images/example-dicom-warning.png)
 
-Note: A small number of compressed transfer syntaxes outside the 5 listed above (e.g. private or retired ones) still show a read-only "not supported" page instead of the image. The official names and VRs of private tags may not be identified. Binary data and tags required for image display cannot be edited.
+Note: A small number of compressed transfer syntaxes (e.g. private or retired ones, or 12-bit JPEG Extended specifically) still show a read-only "not supported" page instead of the image. The official names and VRs of private tags may not be identified. Binary data and tags required for image display cannot be edited.
 
 ## Installation
 
