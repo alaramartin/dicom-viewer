@@ -241,6 +241,159 @@ export async function convertDicomToBase64(filepath: string): Promise<string> {
     }
 }
 
+export interface GrayscaleImageData {
+    width: number;
+    height: number;
+    pixels: Float32Array; // already rescaled (real-world) values, row-major
+    invert: boolean;
+    defaultWindowCenter: number;
+    defaultWindowWidth: number;
+}
+
+// Extracts rescaled grayscale samples for the interactive window/level
+// feature (drag-to-adjust in the webview, see media/imageWebview.js) —
+// separate from convertDicomToBase64's job of producing one static PNG.
+// Returns null for anything that isn't plain single-component grayscale
+// data: color/palette images (windowing isn't meaningful for those), and
+// JPEG Baseline/Extended specifically, which are already lossy-quantized to
+// a fixed 0-255 range by jpeg-js as part of DCT decoding — there's no real
+// "raw" sample left to window (same reasoning as convertDicomToBase64's VOI
+// windowing above). The webview always has the static PNG as a fallback, so
+// returning null here just means that file doesn't get interactive
+// window/level, never a broken viewer.
+//
+// This re-parses/re-decodes the file independently of convertDicomToBase64
+// (the same pattern getMetadata() already uses for the same file) rather
+// than threading a second return value through every render function —
+// simpler, at the cost of decoding compressed pixel data twice per open.
+export async function getGrayscaleImageData(filepath: string): Promise<GrayscaleImageData | null> {
+    try {
+        const dicomFile = fs.readFileSync(filepath);
+        const dataSet = dicomParser.parseDicom(dicomFile);
+
+        const rows = dataSet.uint16('x00280010');
+        const cols = dataSet.uint16('x00280011');
+        const bitsAllocated = dataSet.uint16('x00280100') || 16;
+        const bitsStored = dataSet.uint16('x00280101') || bitsAllocated;
+        const pixelRepresentation = dataSet.uint16('x00280103') || 0;
+        const samplesPerPixel = dataSet.uint16('x00280002') || 1;
+        const photometricInterpretation = (dataSet.string('x00280004') || 'MONOCHROME2').toUpperCase();
+        const pixelData = dataSet.elements.x7fe00010;
+        const transferSyntaxUID = dataSet.string('x00020010');
+        const voi = getVoiLutParams(dataSet);
+
+        if (!pixelData || !rows || !cols || samplesPerPixel !== 1 || photometricInterpretation === 'PALETTE COLOR') {
+            return null;
+        }
+
+        const isUncompressed = !transferSyntaxUID || UNCOMPRESSED_TRANSFER_SYNTAXES.has(transferSyntaxUID);
+        let rawPixels: Uint8Array | Uint16Array | Int16Array;
+        let width = cols;
+        let height = rows;
+
+        if (isUncompressed) {
+            if (bitsAllocated > 16) {
+                return null;
+            }
+            const bytesPerSample = Math.ceil(bitsAllocated / 8);
+            const singleFrameLength = rows * cols * bytesPerSample;
+            if (pixelData.length < singleFrameLength) {
+                return null;
+            }
+            rawPixels = bitsAllocated <= 8
+                ? new Uint8Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, singleFrameLength)
+                : pixelRepresentation === 1
+                    ? new Int16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, singleFrameLength / 2)
+                    : new Uint16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, singleFrameLength / 2);
+        } else if (transferSyntaxUID === RLE_TRANSFER_SYNTAX) {
+            if (bitsAllocated > 16) {
+                return null;
+            }
+            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
+            const bytesPerSample = Math.ceil(bitsAllocated / 8);
+            const pixelCount = rows * cols;
+            const segments = decodeRLESegments(compressedFrame, pixelCount);
+            if (segments.length < bytesPerSample) {
+                return null;
+            }
+            rawPixels = combineRleSampleBytes(segments, 0, bytesPerSample, pixelCount, pixelRepresentation, bitsStored);
+        } else if (transferSyntaxUID && JPEG_LOSSLESS_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
+            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
+            const decoder = new jpegLossless.Decoder();
+            const arrayBuffer = compressedFrame.buffer.slice(compressedFrame.byteOffset, compressedFrame.byteOffset + compressedFrame.length);
+            const outputData = decoder.decode(arrayBuffer, 0, arrayBuffer.byteLength);
+            if (decoder.numComp !== 1 || decoder.precision > 16) {
+                return null;
+            }
+            width = decoder.xDim;
+            height = decoder.yDim;
+            rawPixels = pixelRepresentation === 1 && outputData instanceof Uint16Array ? signExtend16(outputData) : outputData;
+        } else if (transferSyntaxUID && (JPEG_LS_TRANSFER_SYNTAXES.has(transferSyntaxUID) || JPEG_2000_TRANSFER_SYNTAXES.has(transferSyntaxUID))) {
+            const isJpegLS = JPEG_LS_TRANSFER_SYNTAXES.has(transferSyntaxUID);
+            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
+            const module = isJpegLS ? await getCharlsModule() : await getOpenJpegModule();
+            const DecoderCtor = isJpegLS ? module.JpegLSDecoder : module.J2KDecoder;
+            const frame = decodeWithEmbindCodec(module, DecoderCtor, compressedFrame);
+            if (frame.componentCount !== 1) {
+                return null;
+            }
+            width = frame.width;
+            height = frame.height;
+            const isSigned = frame.isSigned ?? (pixelRepresentation === 1);
+            rawPixels = isSigned && frame.pixels instanceof Uint16Array ? signExtend16(frame.pixels) : frame.pixels;
+        } else {
+            // JPEG Baseline/Extended, or a genuinely unsupported syntax — no
+            // real sample data available to window interactively.
+            return null;
+        }
+
+        const pixelCount = Math.min(rawPixels.length, width * height);
+        const pixels = new Float32Array(pixelCount);
+        for (let i = 0; i < pixelCount; i++) {
+            pixels[i] = rawPixels[i] * voi.rescaleSlope + voi.rescaleIntercept;
+        }
+
+        let defaultWindowCenter = voi.windowCenter;
+        let defaultWindowWidth = voi.windowWidth;
+        if (defaultWindowCenter === undefined || defaultWindowWidth === undefined) {
+            // same fallback intent as renderGrayscale's non-windowed path:
+            // stretch the actual data range across the full display range.
+            let min = Infinity;
+            let max = -Infinity;
+            for (let i = 0; i < pixelCount; i++) {
+                if (pixels[i] < min) { min = pixels[i]; }
+                if (pixels[i] > max) { max = pixels[i]; }
+            }
+            if (!Number.isFinite(min) || !Number.isFinite(max)) {
+                return null;
+            }
+            defaultWindowCenter = (min + max) / 2;
+            defaultWindowWidth = Math.max(1, max - min);
+        }
+
+        return {
+            width,
+            height,
+            pixels,
+            invert: photometricInterpretation === 'MONOCHROME1',
+            defaultWindowCenter,
+            defaultWindowWidth,
+        };
+    } catch {
+        // best-effort enhancement — any failure here just means the static
+        // PNG stays as the final rendered image, never a broken viewer.
+        return null;
+    }
+}
+
+function signExtend16(values: Uint16Array): Int16Array {
+    const out = new Int16Array(values.length);
+    for (let i = 0; i < values.length; i++) {
+        out[i] = (values[i] << 16) >> 16;
+    }
+    return out;
+}
+
 // Pulls the compressed bytes for one frame out of encapsulated pixel data
 // (fragments framed by DICOM item tags, per PS3.5 A.4). Most encoders write
 // a Basic Offset Table mapping frame index -> fragment, which dicom-parser

@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { convertDicomToBase64, getMetadata } from "./getImage";
+import { convertDicomToBase64, getGrayscaleImageData, getMetadata } from "./getImage";
 import { saveDicomEdits } from "./editDicom";
 import { getLogger, describeError } from "./logger";
 
@@ -73,10 +73,47 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                 );
                 isCompressed = true;
             } else {
+                const imageScriptUri = imagePanel.webview.asWebviewUri(
+                    vscode.Uri.joinPath(
+                        this.context.extensionUri,
+                        "media",
+                        "imageWebview.js",
+                    ),
+                );
                 imagePanel.webview.html = this.getImageWebviewContent(
                     imagePanel.webview,
                     base64Image,
+                    imageScriptUri,
                 );
+
+                // kicks off in parallel with the metadata panel setup below —
+                // interactive window/level is an enhancement on top of the
+                // static image above, not a blocker for showing it. Only
+                // eligible grayscale files (see getGrayscaleImageData) get
+                // anything back; everything else keeps the static image.
+                if (base64Image) {
+                    const grayscaleDataPromise = getGrayscaleImageData(filepath);
+                    imagePanel.webview.onDidReceiveMessage(
+                        async (message) => {
+                            if (message.command === "ready") {
+                                const grayscaleData = await grayscaleDataPromise;
+                                if (grayscaleData) {
+                                    imagePanel.webview.postMessage({
+                                        command: "grayscaleImageData",
+                                        width: grayscaleData.width,
+                                        height: grayscaleData.height,
+                                        pixels: Array.from(grayscaleData.pixels),
+                                        invert: grayscaleData.invert,
+                                        defaultWindowCenter: grayscaleData.defaultWindowCenter,
+                                        defaultWindowWidth: grayscaleData.defaultWindowWidth,
+                                    });
+                                }
+                            }
+                        },
+                        undefined,
+                        this.context.subscriptions,
+                    );
+                }
             }
 
             let metadataPanel: vscode.WebviewPanel | undefined;
@@ -309,9 +346,10 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			</html>`;
     }
 
-    getImageWebviewContent(webview: vscode.Webview, base64Image: string) {
-        const csp = `default-src 'none'; img-src data:; style-src 'unsafe-inline';`;
+    getImageWebviewContent(webview: vscode.Webview, base64Image: string, scriptUri: vscode.Uri) {
         if (base64Image) {
+            const nonce = getNonce();
+            const csp = `default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
             return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
@@ -319,12 +357,18 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				<meta http-equiv="Content-Security-Policy" content="${csp}">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<title>DICOM Image</title>
+				<style>
+					.dicom-image { width: 80%; border: 1px solid #ccc; }
+					.window-level-hint { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+				</style>
 			</head>
 			<body>
-				<img src="${escapeHtml(base64Image)}" width="80%" style="border: 1px solid #ccc;" />
+				<img class="dicom-image" src="${escapeHtml(base64Image)}" />
+				<script nonce="${nonce}" src="${scriptUri}"></script>
 			</body>
 			</html>`;
         } else {
+            const csp = `default-src 'none'; style-src 'unsafe-inline';`;
             return `<!DOCTYPE html>
 			<html lang="en">
 			<head>
