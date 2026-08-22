@@ -1,7 +1,10 @@
-// Bundles src/extension.ts (and everything it pulls in from node_modules)
-// into a single dist/extension.js, so the packaged VSIX doesn't need to ship
-// node_modules at all. `vscode` is the one thing that must stay external —
-// it isn't a real package, VS Code injects it at runtime.
+// Bundles src/extension.ts and src/imageWorker.ts (and everything they pull
+// in from node_modules) into dist/extension.js and dist/imageWorker.js, so
+// the packaged VSIX doesn't need to ship node_modules at all. `vscode` is
+// the one thing that must stay external — it isn't a real package, VS Code
+// injects it at runtime (src/imageWorker.ts runs in a worker_thread rather
+// than the extension host, so it never actually resolves 'vscode' at
+// runtime — see the fallback in src/logger.ts).
 import * as esbuild from 'esbuild';
 
 const production = process.argv.includes('--production');
@@ -25,12 +28,12 @@ const watchLoggerPlugin = {
 
 async function main() {
 	const ctx = await esbuild.context({
-		entryPoints: ['src/extension.ts'],
+		entryPoints: ['src/extension.ts', 'src/imageWorker.ts'],
 		bundle: true,
 		format: 'cjs',
 		platform: 'node',
 		target: 'node20',
-		outfile: 'dist/extension.js',
+		outdir: 'dist',
 		external: ['vscode'],
 		minify: production,
 		sourcemap: !production,

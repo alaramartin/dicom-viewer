@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
-import { convertDicomToBase64, getGrayscaleImageData, getMetadata, getNumberOfFrames } from "./getImage";
+import { getMetadata, getNumberOfFrames } from "./getImage";
+import { ImageDecodeWorker } from "./imageDecodeWorker";
 import { saveDicomEdits } from "./editDicom";
 import { getLogger, describeError } from "./logger";
 
@@ -41,7 +42,19 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 
     private static readonly viewType = "dicomViewer.dcm";
 
-    constructor(private readonly context: vscode.ExtensionContext) {}
+    // Path to the bundled worker_thread script (see src/imageWorker.ts and
+    // build/esbuild.mjs, which produces this alongside dist/extension.js).
+    // Node's Worker constructor needs a real filesystem path, not a webview
+    // URI, so this uses .fsPath rather than webview.asWebviewUri().
+    private readonly workerScriptPath: string;
+
+    constructor(private readonly context: vscode.ExtensionContext) {
+        this.workerScriptPath = vscode.Uri.joinPath(
+            context.extensionUri,
+            "dist",
+            "imageWorker.js",
+        ).fsPath;
+    }
 
     async resolveCustomEditor(
         document: vscode.CustomDocument,
@@ -57,14 +70,28 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                     vscode.Uri.joinPath(this.context.extensionUri, "media"),
                 ],
             };
+
+            // all pixel decoding (parsing, per-pixel color/windowing loops,
+            // and the JPEG/RLE/WASM codecs for compressed syntaxes) runs in
+            // this worker_thread rather than on the extension host's main
+            // thread — a large CT/MR file used to freeze the whole VS Code
+            // window for the duration of the decode. One worker per open
+            // document, terminated when its tab closes (see onDidDispose
+            // below).
+            const decodeWorker = new ImageDecodeWorker(this.workerScriptPath);
+
             // get the image in base64 and display in webview
             let base64Image: string;
             try {
-                base64Image = await convertDicomToBase64(filepath);
+                base64Image = await decodeWorker.convertDicomToBase64(filepath);
             } catch (e) {
-                // convertDicomToBase64 already logged the error type; an uncaught
-                // throw here rejects resolveCustomEditor's promise and crashes the
-                // editor tab, so fall through to the "something went wrong" page.
+                // never log the error object itself — it can embed tag values
+                getLogger().error(
+                    `DICOM image conversion failed (${describeError(e).type})`,
+                );
+                // an uncaught throw here rejects resolveCustomEditor's promise
+                // and crashes the editor tab, so fall through to the
+                // "something went wrong" page instead.
                 base64Image = "";
             }
             if (base64Image === "compressed") {
@@ -72,6 +99,15 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                     imagePanel.webview,
                 );
                 isCompressed = true;
+            } else if (base64Image === "no-image") {
+                // not a decode failure — this file genuinely has no
+                // PixelData/Rows/Columns at all (e.g. a metadata-only OT/SR
+                // object). isCompressed deliberately stays false: there's no
+                // compressed-transfer-syntax reason to block editing the
+                // metadata, which is likely the whole point of a file like this.
+                imagePanel.webview.html = this.getNoImageContent(
+                    imagePanel.webview,
+                );
             } else {
                 const imageScriptUri = imagePanel.webview.asWebviewUri(
                     vscode.Uri.joinPath(
@@ -96,7 +132,8 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                     // gets frame-navigation UI at all (files with a single
                     // frame, the overwhelming majority, get none).
                     const numberOfFrames = getNumberOfFrames(filepath);
-                    const grayscaleDataPromise = getGrayscaleImageData(filepath, 0);
+                    const grayscaleDataPromise =
+                        decodeWorker.getGrayscaleImageData(filepath, 0);
                     imagePanel.webview.onDidReceiveMessage(
                         async (message) => {
                             if (message.command === "ready") {
@@ -104,26 +141,44 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                                     command: "init",
                                     numberOfFrames,
                                 });
-                                const grayscaleData = await grayscaleDataPromise;
+                                const grayscaleData =
+                                    await grayscaleDataPromise;
                                 if (grayscaleData) {
                                     imagePanel.webview.postMessage({
                                         command: "grayscaleImageData",
                                         width: grayscaleData.width,
                                         height: grayscaleData.height,
-                                        pixels: Array.from(grayscaleData.pixels),
+                                        pixels: Array.from(
+                                            grayscaleData.pixels,
+                                        ),
                                         invert: grayscaleData.invert,
-                                        defaultWindowCenter: grayscaleData.defaultWindowCenter,
-                                        defaultWindowWidth: grayscaleData.defaultWindowWidth,
+                                        defaultWindowCenter:
+                                            grayscaleData.defaultWindowCenter,
+                                        defaultWindowWidth:
+                                            grayscaleData.defaultWindowWidth,
                                     });
                                 }
-                            } else if (message.command === "changeFrame" && numberOfFrames > 1) {
+                            } else if (
+                                message.command === "changeFrame" &&
+                                numberOfFrames > 1
+                            ) {
                                 const frameIndex = Math.max(
                                     0,
-                                    Math.min(numberOfFrames - 1, message.frameIndex),
+                                    Math.min(
+                                        numberOfFrames - 1,
+                                        message.frameIndex,
+                                    ),
                                 );
                                 try {
-                                    const frameBase64 = await convertDicomToBase64(filepath, frameIndex);
-                                    if (!frameBase64 || frameBase64 === "compressed") {
+                                    const frameBase64 =
+                                        await decodeWorker.convertDicomToBase64(
+                                            filepath,
+                                            frameIndex,
+                                        );
+                                    if (
+                                        !frameBase64 ||
+                                        frameBase64 === "compressed"
+                                    ) {
                                         throw new Error("Frame unavailable");
                                     }
                                     // if the file is grayscale-eligible, the webview is
@@ -132,19 +187,29 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                                     // window/level rather than a fresh PNG at the file's
                                     // default window — deliberately doesn't reset W/L
                                     // per frame, matching how real viewers behave.
-                                    const frameGrayscaleData = await getGrayscaleImageData(filepath, frameIndex);
+                                    const frameGrayscaleData =
+                                        await decodeWorker.getGrayscaleImageData(
+                                            filepath,
+                                            frameIndex,
+                                        );
                                     imagePanel.webview.postMessage({
                                         command: "frameImageData",
                                         frameIndex,
-                                        base64Image: frameGrayscaleData ? null : frameBase64,
+                                        base64Image: frameGrayscaleData
+                                            ? null
+                                            : frameBase64,
                                         grayscaleData: frameGrayscaleData
                                             ? {
                                                   width: frameGrayscaleData.width,
                                                   height: frameGrayscaleData.height,
-                                                  pixels: Array.from(frameGrayscaleData.pixels),
+                                                  pixels: Array.from(
+                                                      frameGrayscaleData.pixels,
+                                                  ),
                                                   invert: frameGrayscaleData.invert,
-                                                  defaultWindowCenter: frameGrayscaleData.defaultWindowCenter,
-                                                  defaultWindowWidth: frameGrayscaleData.defaultWindowWidth,
+                                                  defaultWindowCenter:
+                                                      frameGrayscaleData.defaultWindowCenter,
+                                                  defaultWindowWidth:
+                                                      frameGrayscaleData.defaultWindowWidth,
                                               }
                                             : null,
                                     });
@@ -345,9 +410,11 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 
             createMetadataPanel();
 
-            // if closed the image panel, also close the corresponding metadata panel
+            // if closed the image panel, also close the corresponding metadata
+            // panel and terminate this document's decode worker
             imagePanel.onDidDispose(() => {
                 disposeMetadataPanel();
+                decodeWorker.dispose();
             });
 
             // if focus is switched away from the image panel, also close the metadata panel
@@ -397,7 +464,28 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			</html>`;
     }
 
-    getImageWebviewContent(webview: vscode.Webview, base64Image: string, scriptUri: vscode.Uri) {
+    getNoImageContent(webview: vscode.Webview) {
+        const csp = `default-src 'none'; style-src 'unsafe-inline';`;
+        return `<!DOCTYPE html>
+			<html lang="en">
+			<head>
+				<meta charset="UTF-8">
+				<meta http-equiv="Content-Security-Policy" content="${csp}">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>DICOM Image</title>
+			</head>
+			<body>
+				<h3>This DICOM has no image data</h3>
+				<p>It has no PixelData, so there's nothing to display here, but its metadata is still shown and editable in the panel beside this one.</p>
+			</body>
+			</html>`;
+    }
+
+    getImageWebviewContent(
+        webview: vscode.Webview,
+        base64Image: string,
+        scriptUri: vscode.Uri,
+    ) {
         if (base64Image) {
             const nonce = getNonce();
             const csp = `default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
