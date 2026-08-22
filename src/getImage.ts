@@ -114,7 +114,24 @@ function getVoiLutParams(dataSet: dicomParser.DataSet): VoiLutParams {
     };
 }
 
-export async function convertDicomToBase64(filepath: string): Promise<string> {
+// Cheap header-only read of NumberOfFrames (0028,0008) — used by the
+// extension host to decide whether to show frame-navigation UI at all,
+// without paying for a full pixel decode.
+export function getNumberOfFrames(filepath: string): number {
+    try {
+        const dicomFile = fs.readFileSync(filepath);
+        const dataSet = dicomParser.parseDicom(dicomFile);
+        return dataSet.intString('x00280008') || 1;
+    } catch {
+        return 1;
+    }
+}
+
+function clampFrameIndex(frameIndex: number, numberOfFrames: number): number {
+    return Math.max(0, Math.min(numberOfFrames - 1, Math.floor(frameIndex) || 0));
+}
+
+export async function convertDicomToBase64(filepath: string, frameIndex: number = 0): Promise<string> {
     try {
         // get the dicom file and its metadata
         const dicomFile = fs.readFileSync(filepath);
@@ -132,6 +149,7 @@ export async function convertDicomToBase64(filepath: string): Promise<string> {
         const pixelData = dataSet.elements.x7fe00010; // this is the pixel array
         const transferSyntaxUID = dataSet.string('x00020010');
         const numberOfFrames = dataSet.intString('x00280008') || 1;
+        const frame = clampFrameIndex(frameIndex, numberOfFrames);
         const voi = getVoiLutParams(dataSet);
 
         if (!pixelData || !rows || !cols) {
@@ -151,9 +169,7 @@ export async function convertDicomToBase64(filepath: string): Promise<string> {
         let png: any;
 
         if (isSupportedCompressed) {
-            // only the first frame is decoded for now; multi-frame
-            // navigation is a separate Phase 2 feature
-            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
+            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, frame);
             // JPEG Baseline/Extended intentionally don't get VOI windowing —
             // jpeg-js already quantized them to a fixed 0-255 display range as
             // part of lossy DCT decoding, so there's no real "raw" sample left
@@ -204,14 +220,13 @@ export async function convertDicomToBase64(filepath: string): Promise<string> {
                 throw new Error(`Unsupported bit allocation: ${bitsAllocated}`);
             }
 
-            // only the first frame is decoded for now; multi-frame navigation is
-            // a Phase 2 feature
-            const frameByteLength = Math.min(pixelData.length, singleFrameLength);
+            const frameOffset = frame * singleFrameLength;
+            const frameByteLength = Math.min(Math.max(0, pixelData.length - frameOffset), singleFrameLength);
             const frameBytes: Uint8Array | Uint16Array | Int16Array = bitsAllocated <= 8
-                ? new Uint8Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, frameByteLength)
+                ? new Uint8Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset + frameOffset, frameByteLength)
                 : pixelRepresentation === 1
-                    ? new Int16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, Math.floor(frameByteLength / 2))
-                    : new Uint16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, Math.floor(frameByteLength / 2));
+                    ? new Int16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset + frameOffset, Math.floor(frameByteLength / 2))
+                    : new Uint16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset + frameOffset, Math.floor(frameByteLength / 2));
 
             // create PNG
             png = new PNG({ width: cols, height: rows });
@@ -266,7 +281,7 @@ export interface GrayscaleImageData {
 // (the same pattern getMetadata() already uses for the same file) rather
 // than threading a second return value through every render function —
 // simpler, at the cost of decoding compressed pixel data twice per open.
-export async function getGrayscaleImageData(filepath: string): Promise<GrayscaleImageData | null> {
+export async function getGrayscaleImageData(filepath: string, frameIndex: number = 0): Promise<GrayscaleImageData | null> {
     try {
         const dicomFile = fs.readFileSync(filepath);
         const dataSet = dicomParser.parseDicom(dicomFile);
@@ -280,6 +295,8 @@ export async function getGrayscaleImageData(filepath: string): Promise<Grayscale
         const photometricInterpretation = (dataSet.string('x00280004') || 'MONOCHROME2').toUpperCase();
         const pixelData = dataSet.elements.x7fe00010;
         const transferSyntaxUID = dataSet.string('x00020010');
+        const numberOfFrames = dataSet.intString('x00280008') || 1;
+        const frameIdx = clampFrameIndex(frameIndex, numberOfFrames);
         const voi = getVoiLutParams(dataSet);
 
         if (!pixelData || !rows || !cols || samplesPerPixel !== 1 || photometricInterpretation === 'PALETTE COLOR') {
@@ -297,19 +314,20 @@ export async function getGrayscaleImageData(filepath: string): Promise<Grayscale
             }
             const bytesPerSample = Math.ceil(bitsAllocated / 8);
             const singleFrameLength = rows * cols * bytesPerSample;
-            if (pixelData.length < singleFrameLength) {
+            const frameOffset = frameIdx * singleFrameLength;
+            if (pixelData.length < frameOffset + singleFrameLength) {
                 return null;
             }
             rawPixels = bitsAllocated <= 8
-                ? new Uint8Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, singleFrameLength)
+                ? new Uint8Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset + frameOffset, singleFrameLength)
                 : pixelRepresentation === 1
-                    ? new Int16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, singleFrameLength / 2)
-                    : new Uint16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset, singleFrameLength / 2);
+                    ? new Int16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset + frameOffset, singleFrameLength / 2)
+                    : new Uint16Array(dicomFile.buffer, dicomFile.byteOffset + pixelData.dataOffset + frameOffset, singleFrameLength / 2);
         } else if (transferSyntaxUID === RLE_TRANSFER_SYNTAX) {
             if (bitsAllocated > 16) {
                 return null;
             }
-            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
+            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, frameIdx);
             const bytesPerSample = Math.ceil(bitsAllocated / 8);
             const pixelCount = rows * cols;
             const segments = decodeRLESegments(compressedFrame, pixelCount);
@@ -318,7 +336,7 @@ export async function getGrayscaleImageData(filepath: string): Promise<Grayscale
             }
             rawPixels = combineRleSampleBytes(segments, 0, bytesPerSample, pixelCount, pixelRepresentation, bitsStored);
         } else if (transferSyntaxUID && JPEG_LOSSLESS_TRANSFER_SYNTAXES.has(transferSyntaxUID)) {
-            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
+            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, frameIdx);
             const decoder = new jpegLossless.Decoder();
             const arrayBuffer = compressedFrame.buffer.slice(compressedFrame.byteOffset, compressedFrame.byteOffset + compressedFrame.length);
             const outputData = decoder.decode(arrayBuffer, 0, arrayBuffer.byteLength);
@@ -330,7 +348,7 @@ export async function getGrayscaleImageData(filepath: string): Promise<Grayscale
             rawPixels = pixelRepresentation === 1 && outputData instanceof Uint16Array ? signExtend16(outputData) : outputData;
         } else if (transferSyntaxUID && (JPEG_LS_TRANSFER_SYNTAXES.has(transferSyntaxUID) || JPEG_2000_TRANSFER_SYNTAXES.has(transferSyntaxUID))) {
             const isJpegLS = JPEG_LS_TRANSFER_SYNTAXES.has(transferSyntaxUID);
-            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, 0);
+            const compressedFrame = getEncapsulatedFrameBytes(dataSet, pixelData, frameIdx);
             const module = isJpegLS ? await getCharlsModule() : await getOpenJpegModule();
             const DecoderCtor = isJpegLS ? module.JpegLSDecoder : module.J2KDecoder;
             const frame = decodeWithEmbindCodec(module, DecoderCtor, compressedFrame);
@@ -399,8 +417,11 @@ function signExtend16(values: Uint16Array): Int16Array {
 // a Basic Offset Table mapping frame index -> fragment, which dicom-parser
 // already parses during parseDicom(); a few omit it (it's optional), in
 // which case we fall back to treating every fragment as belonging to the
-// single frame — correct for single-frame files, which covers the common
-// case since multi-frame decoding isn't implemented yet regardless.
+// single frame — correct for single-frame files, but a genuinely multi-frame
+// encapsulated file with no offset table has no way to locate frame
+// boundaries at all, so frameIndex > 0 throws in that case (surfaced to the
+// webview as a frameChangeError — see the "changeFrame" handler in
+// extension.ts).
 function getEncapsulatedFrameBytes(dataSet: dicomParser.DataSet, pixelDataElement: any, frameIndex: number): Uint8Array {
     const basicOffsetTable: number[] | undefined = pixelDataElement.basicOffsetTable;
     const fragments: Array<{ offset: number; position: number; length: number }> | undefined = pixelDataElement.fragments;

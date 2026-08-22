@@ -20,6 +20,21 @@
     let dragStartCenter = 0;
     let dragStartWidth = 1;
 
+    // Multi-frame navigation: a slider + prev/next buttons + arrow-key
+    // stepping, shown only for files with NumberOfFrames > 1 (the extension
+    // host tells us via the "init" message, since it already knows this
+    // cheaply without a full pixel decode). Frame decoding happens on the
+    // extension host per request, not all up front — a full series can be
+    // hundreds of frames, too much to hold decoded in memory at once.
+    let numberOfFrames = 1;
+    let currentFrameIndex = 0;
+    let latestRequestedFrame = 0;
+    let navContainer = null;
+    let frameSlider = null;
+    let frameLabel = null;
+    let prevBtn = null;
+    let nextBtn = null;
+
     // Mirrors applyLinearVoiLut() in src/getImage.ts — PS3.3 C.11.2.1.2.1's
     // default ("LINEAR") VOI LUT function. Keep the two in sync.
     function applyLinearVoiLut(x, center, width) {
@@ -75,6 +90,80 @@
         windowCenter = imageData.defaultWindowCenter;
         windowWidth = imageData.defaultWindowWidth;
         scheduleRender();
+    }
+
+    function updateFrameLabel() {
+        if (frameLabel) {
+            frameLabel.textContent = "Frame " + (currentFrameIndex + 1) + " / " + numberOfFrames;
+        }
+        if (prevBtn) {
+            prevBtn.disabled = currentFrameIndex <= 0;
+        }
+        if (nextBtn) {
+            nextBtn.disabled = currentFrameIndex >= numberOfFrames - 1;
+        }
+    }
+
+    // Asks the extension host to decode a different frame. Responses are
+    // matched against latestRequestedFrame so a stale response (e.g. from
+    // scrubbing the slider quickly) can't clobber a newer, still-in-flight
+    // request's result.
+    function requestFrame(frameIndex) {
+        const clamped = Math.max(0, Math.min(numberOfFrames - 1, frameIndex));
+        if (clamped === latestRequestedFrame) {
+            return;
+        }
+        latestRequestedFrame = clamped;
+        if (frameSlider) {
+            frameSlider.value = String(clamped);
+        }
+        vscode.postMessage({ command: "changeFrame", frameIndex: clamped });
+    }
+
+    function setupFrameNav() {
+        if (numberOfFrames <= 1 || navContainer) {
+            return;
+        }
+
+        navContainer = document.createElement("div");
+        navContainer.className = "frame-nav";
+
+        prevBtn = document.createElement("button");
+        prevBtn.textContent = "◀";
+        prevBtn.title = "Previous frame";
+        prevBtn.addEventListener("click", () => requestFrame(currentFrameIndex - 1));
+
+        frameSlider = document.createElement("input");
+        frameSlider.type = "range";
+        frameSlider.min = "0";
+        frameSlider.max = String(numberOfFrames - 1);
+        frameSlider.value = "0";
+        frameSlider.addEventListener("input", () => requestFrame(parseInt(frameSlider.value, 10)));
+
+        nextBtn = document.createElement("button");
+        nextBtn.textContent = "▶";
+        nextBtn.title = "Next frame";
+        nextBtn.addEventListener("click", () => requestFrame(currentFrameIndex + 1));
+
+        frameLabel = document.createElement("span");
+        frameLabel.className = "frame-label";
+
+        navContainer.appendChild(prevBtn);
+        navContainer.appendChild(frameSlider);
+        navContainer.appendChild(nextBtn);
+        navContainer.appendChild(frameLabel);
+        document.body.appendChild(navContainer);
+        updateFrameLabel();
+
+        // arrow-key stepping — left/right, since up/down is already the
+        // drag gesture for brightness and this needs to stay distinct.
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "ArrowRight") {
+                requestFrame(currentFrameIndex + 1);
+            } else if (e.key === "ArrowLeft") {
+                requestFrame(currentFrameIndex - 1);
+            }
+        });
     }
 
     function setupCanvas() {
@@ -134,7 +223,10 @@
 
     window.addEventListener("message", (event) => {
         const message = event.data;
-        if (message.command === "grayscaleImageData") {
+        if (message.command === "init") {
+            numberOfFrames = message.numberOfFrames || 1;
+            setupFrameNav();
+        } else if (message.command === "grayscaleImageData") {
             imageData = {
                 width: message.width,
                 height: message.height,
@@ -146,6 +238,50 @@
             windowCenter = message.defaultWindowCenter;
             windowWidth = message.defaultWindowWidth;
             setupCanvas();
+        } else if (message.command === "frameImageData") {
+            // a stale response from a since-superseded request — drop it
+            if (message.frameIndex !== latestRequestedFrame) {
+                return;
+            }
+            currentFrameIndex = message.frameIndex;
+            updateFrameLabel();
+
+            if (message.grayscaleData) {
+                // swap the pixel data only — deliberately keep the user's
+                // current windowCenter/windowWidth rather than resetting to
+                // this frame's default, same as real viewers do when
+                // scrubbing through a series.
+                imageData = {
+                    width: message.grayscaleData.width,
+                    height: message.grayscaleData.height,
+                    pixels: message.grayscaleData.pixels,
+                    invert: message.grayscaleData.invert,
+                    defaultWindowCenter: message.grayscaleData.defaultWindowCenter,
+                    defaultWindowWidth: message.grayscaleData.defaultWindowWidth,
+                };
+                if (!canvas) {
+                    windowCenter = imageData.defaultWindowCenter;
+                    windowWidth = imageData.defaultWindowWidth;
+                    setupCanvas();
+                } else {
+                    if (canvas.width !== imageData.width || canvas.height !== imageData.height) {
+                        canvas.width = imageData.width;
+                        canvas.height = imageData.height;
+                    }
+                    scheduleRender();
+                }
+            } else if (message.base64Image) {
+                const imgEl = document.querySelector("img");
+                if (imgEl) {
+                    imgEl.src = message.base64Image;
+                }
+            }
+        } else if (message.command === "frameChangeError") {
+            // revert the slider to the last frame that actually rendered
+            latestRequestedFrame = currentFrameIndex;
+            if (frameSlider) {
+                frameSlider.value = String(currentFrameIndex);
+            }
         }
     });
 

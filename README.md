@@ -13,6 +13,7 @@ Available on [VS Code Marketplace](https://marketplace.visualstudio.com/items?it
 - **Easy to use**: Activates as soon as you click on a .dcm file
 - **Sequences**: Supports sequence elements (viewing and editing)
 - **Compressed images**: Displays and edits DICOMs compressed with RLE Lossless, JPEG Baseline, JPEG Extended (8-bit), JPEG Lossless, JPEG-LS, and JPEG 2000 — the full pixel data is decoded, not just the metadata
+- **Window/level**: Honors the file's real window/level and rescale values (accurate Hounsfield Units on CT), and supports interactive adjustment — drag on the image to change brightness/contrast, double-click to reset
 
 ### Examples
 

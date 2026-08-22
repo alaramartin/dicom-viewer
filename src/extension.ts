@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { convertDicomToBase64, getGrayscaleImageData, getMetadata } from "./getImage";
+import { convertDicomToBase64, getGrayscaleImageData, getMetadata, getNumberOfFrames } from "./getImage";
 import { saveDicomEdits } from "./editDicom";
 import { getLogger, describeError } from "./logger";
 
@@ -92,10 +92,18 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                 // eligible grayscale files (see getGrayscaleImageData) get
                 // anything back; everything else keeps the static image.
                 if (base64Image) {
-                    const grayscaleDataPromise = getGrayscaleImageData(filepath);
+                    // header-only read, cheap — decides whether the webview
+                    // gets frame-navigation UI at all (files with a single
+                    // frame, the overwhelming majority, get none).
+                    const numberOfFrames = getNumberOfFrames(filepath);
+                    const grayscaleDataPromise = getGrayscaleImageData(filepath, 0);
                     imagePanel.webview.onDidReceiveMessage(
                         async (message) => {
                             if (message.command === "ready") {
+                                imagePanel.webview.postMessage({
+                                    command: "init",
+                                    numberOfFrames,
+                                });
                                 const grayscaleData = await grayscaleDataPromise;
                                 if (grayscaleData) {
                                     imagePanel.webview.postMessage({
@@ -106,6 +114,49 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                                         invert: grayscaleData.invert,
                                         defaultWindowCenter: grayscaleData.defaultWindowCenter,
                                         defaultWindowWidth: grayscaleData.defaultWindowWidth,
+                                    });
+                                }
+                            } else if (message.command === "changeFrame" && numberOfFrames > 1) {
+                                const frameIndex = Math.max(
+                                    0,
+                                    Math.min(numberOfFrames - 1, message.frameIndex),
+                                );
+                                try {
+                                    const frameBase64 = await convertDicomToBase64(filepath, frameIndex);
+                                    if (!frameBase64 || frameBase64 === "compressed") {
+                                        throw new Error("Frame unavailable");
+                                    }
+                                    // if the file is grayscale-eligible, the webview is
+                                    // already showing the canvas (not the <img>), so send
+                                    // pixel data to redraw with the user's current
+                                    // window/level rather than a fresh PNG at the file's
+                                    // default window — deliberately doesn't reset W/L
+                                    // per frame, matching how real viewers behave.
+                                    const frameGrayscaleData = await getGrayscaleImageData(filepath, frameIndex);
+                                    imagePanel.webview.postMessage({
+                                        command: "frameImageData",
+                                        frameIndex,
+                                        base64Image: frameGrayscaleData ? null : frameBase64,
+                                        grayscaleData: frameGrayscaleData
+                                            ? {
+                                                  width: frameGrayscaleData.width,
+                                                  height: frameGrayscaleData.height,
+                                                  pixels: Array.from(frameGrayscaleData.pixels),
+                                                  invert: frameGrayscaleData.invert,
+                                                  defaultWindowCenter: frameGrayscaleData.defaultWindowCenter,
+                                                  defaultWindowWidth: frameGrayscaleData.defaultWindowWidth,
+                                              }
+                                            : null,
+                                    });
+                                } catch (e) {
+                                    // never log the error object itself — see the
+                                    // logging note elsewhere in this file
+                                    getLogger().error(
+                                        `DICOM frame change failed (${describeError(e).type})`,
+                                    );
+                                    imagePanel.webview.postMessage({
+                                        command: "frameChangeError",
+                                        frameIndex,
                                     });
                                 }
                             }
@@ -360,6 +411,12 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				<style>
 					.dicom-image { width: 80%; border: 1px solid #ccc; }
 					.window-level-hint { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+					.frame-nav { display: flex; align-items: center; gap: 8px; margin-top: 8px; max-width: 80%; }
+					.frame-nav input[type="range"] { flex: 1; }
+					.frame-nav button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 2px 10px; cursor: pointer; border-radius: 2px; }
+					.frame-nav button:hover { background: var(--vscode-button-hoverBackground); }
+					.frame-nav button:disabled { opacity: 0.5; cursor: default; }
+					.frame-nav .frame-label { color: var(--vscode-descriptionForeground); font-size: 0.9em; white-space: nowrap; }
 				</style>
 			</head>
 			<body>

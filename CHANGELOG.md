@@ -2,6 +2,11 @@
 
 All notable changes to the "DICOM Viewer & Editor" extension are documented here.
 
+## [1.6.1] - 2026-08-21
+
+- Grayscale images now honor the file's `WindowCenter`/`WindowWidth`/`RescaleSlope`/`RescaleIntercept` tags when present, instead of always normalizing to the pixel data's own min/max. Displayed values are now real Hounsfield Units on CT, and images match what other DICOM viewers show. Falls back to the previous behavior when those tags are absent.
+- Added interactive window/level: drag on an image to adjust brightness (up/down) and contrast (left/right) in real time, with double-click to reset. A hint below the image explains the controls. Applies to grayscale images with real pixel data (uncompressed, RLE, JPEG Lossless, JPEG-LS, JPEG 2000); color images and JPEG Baseline/Extended are unaffected.
+
 ## [1.6.0] - 2026-08-21
 
 **The single most-requested feature: compressed DICOMs now display and are fully editable.** Previously any compressed file hit a read-only "not supported" page — this covered a large share of real-world clinical/research exports.
