@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "path";
+import * as os from "os";
 import { getMetadata, getNumberOfFrames } from "./getImage";
 import { ImageDecodeWorker } from "./imageDecodeWorker";
 import { saveDicomEdits } from "./editDicom";
@@ -858,11 +859,27 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
     }
 
     async sendFeedbackCommand(): Promise<void> {
-        await vscode.env.openExternal(
-            vscode.Uri.parse(
-                "https://github.com/alaramartin/dicom-viewer/issues",
-            ),
-        );
+        // pre-fill the environment details a bug report would need anyway,
+        // so reporting one doesn't start with "what version are you on?"
+        // back-and-forth. None of this is PHI or user data — extension/VS
+        // Code version and OS platform/release/arch only.
+        const extensionVersion: string =
+            this.context.extension.packageJSON.version;
+        const body = [
+            "<!-- Please describe the issue or feature request. The environment details below are filled in for you. -->",
+            "",
+            "---",
+            "",
+            "**Environment**",
+            `- DICOM Viewer: ${extensionVersion}`,
+            `- VS Code: ${vscode.version}`,
+            `- OS: ${process.platform} ${os.release()} (${process.arch})`,
+        ].join("\n");
+
+        const url =
+            "https://github.com/alaramartin/dicom-viewer/issues/new" +
+            `?labels=feedback&title=&body=${encodeURIComponent(body)}`;
+        await vscode.env.openExternal(vscode.Uri.parse(url));
     }
 }
 
