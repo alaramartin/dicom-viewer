@@ -335,6 +335,15 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                         "metadataSearch.js",
                     ),
                 );
+                // same story as searchScriptUri — right-click-to-copy works
+                // the same whether or not the file is editable
+                const copyScriptUri = metadataPanel.webview.asWebviewUri(
+                    vscode.Uri.joinPath(
+                        this.context.extensionUri,
+                        "media",
+                        "metadataCopy.js",
+                    ),
+                );
                 // always initialize with original metadata
                 metadataPanel.webview.html = this.getMetadataWebviewContent(
                     metadataPanel.webview,
@@ -342,6 +351,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                     cssUri,
                     scriptUri,
                     searchScriptUri,
+                    copyScriptUri,
                 );
                 if (!isCompressed) {
                     // hand back whatever was pending before this panel was last
@@ -424,6 +434,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                                                     cssUri,
                                                     scriptUri,
                                                     searchScriptUri,
+                                                    copyScriptUri,
                                                 );
                                         }
                                     }
@@ -605,6 +616,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
         cssUri: vscode.Uri,
         scriptUri: vscode.Uri,
         searchScriptUri: vscode.Uri,
+        copyScriptUri: vscode.Uri,
     ) {
         if (metadata.length === 1) {
             const csp = `default-src 'none'; style-src 'unsafe-inline';`;
@@ -717,6 +729,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				</div>
 				<script nonce="${nonce}" src="${scriptUri}"></script>
 				<script nonce="${nonce}" src="${searchScriptUri}"></script>
+				<script nonce="${nonce}" src="${copyScriptUri}"></script>
 			</body>
 			</html>`;
         }

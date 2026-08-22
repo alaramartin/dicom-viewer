@@ -39,6 +39,26 @@ h3 {
 .search-hidden {
     display: none !important;
 }
+#metadata-copy-menu {
+    position: fixed;
+    z-index: 5000;
+    min-width: 140px;
+    padding: 4px 0;
+    font-size: 12px;
+    background-color: var(--vscode-menu-background, var(--vscode-editor-background));
+    color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+.metadata-copy-menu-item {
+    padding: 6px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.metadata-copy-menu-item:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
 table {
     border-collapse: collapse;
     width: 100%;
