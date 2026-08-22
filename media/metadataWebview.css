@@ -8,6 +8,37 @@ h3 {
     color: var(--vscode-editor-foreground);
     margin-bottom: 15px;
 }
+#metadata-search-container {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0 10px;
+    background-color: var(--vscode-editor-background);
+}
+#metadata-search {
+    flex: 1;
+    padding: 6px 10px;
+    font-size: 13px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 3px;
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+}
+#metadata-search:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    outline-offset: -1px;
+}
+#metadata-search-count {
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.search-hidden {
+    display: none !important;
+}
 table {
     border-collapse: collapse;
     width: 100%;
@@ -23,7 +54,10 @@ th {
     background-color: var(--vscode-editor-selectionBackground);
     font-weight: bold;
     position: sticky;
-    top: 0;
+    /* sits just below #metadata-search-container's own sticky top:0 —
+       both stack rather than overlap since this table is what scrolls
+       underneath the search bar, not past it */
+    top: 44px;
 }
 tr:nth-child(even) {
     background-color: var(--vscode-list-hoverBackground);

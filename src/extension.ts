@@ -325,12 +325,23 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                         ),
                     );
                 }
+                // search/filter is the same behavior whether the file is
+                // editable or not, so it's a separate script loaded
+                // alongside whichever of the two above applies
+                const searchScriptUri = metadataPanel.webview.asWebviewUri(
+                    vscode.Uri.joinPath(
+                        this.context.extensionUri,
+                        "media",
+                        "metadataSearch.js",
+                    ),
+                );
                 // always initialize with original metadata
                 metadataPanel.webview.html = this.getMetadataWebviewContent(
                     metadataPanel.webview,
                     metadata,
                     cssUri,
                     scriptUri,
+                    searchScriptUri,
                 );
                 if (!isCompressed) {
                     // hand back whatever was pending before this panel was last
@@ -412,6 +423,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                                                     metadata,
                                                     cssUri,
                                                     scriptUri,
+                                                    searchScriptUri,
                                                 );
                                         }
                                     }
@@ -592,6 +604,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
         metadata: Array<any>,
         cssUri: vscode.Uri,
         scriptUri: vscode.Uri,
+        searchScriptUri: vscode.Uri,
     ) {
         if (metadata.length === 1) {
             const csp = `default-src 'none'; style-src 'unsafe-inline';`;
@@ -690,6 +703,10 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 				<link href="${cssUri}" rel="stylesheet" />
 			</head>
 			<body>
+				<div id="metadata-search-container">
+					<input type="text" id="metadata-search" placeholder="Search by tag, name, or value…" autocomplete="off" />
+					<span id="metadata-search-count"></span>
+				</div>
 				<table>
 					${tableRows}
 				</table>
@@ -699,6 +716,7 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 					<button class="dicom-action-btn discard" title="Discard all changes">Discard Changes</button>
 				</div>
 				<script nonce="${nonce}" src="${scriptUri}"></script>
+				<script nonce="${nonce}" src="${searchScriptUri}"></script>
 			</body>
 			</html>`;
         }
