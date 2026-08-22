@@ -1,8 +1,22 @@
 import * as vscode from "vscode";
+import * as path from "path";
 import { getMetadata, getNumberOfFrames } from "./getImage";
 import { ImageDecodeWorker } from "./imageDecodeWorker";
 import { saveDicomEdits } from "./editDicom";
 import { getLogger, describeError } from "./logger";
+
+// State the Command Palette commands below need for whichever DICOM editor
+// tab is currently focused. One entry per open document, added when its
+// image panel is created and removed when that panel is disposed (see
+// resolveCustomEditor). Kept as a Map (not a single "current" variable)
+// since more than one DICOM file can be open in different tabs at once —
+// commands always act on whichever one is actually active right now.
+interface DocumentState {
+    filepath: string;
+    imagePanel: vscode.WebviewPanel;
+    getMetadata: () => Array<any>;
+    toggleMetadataPanel: () => void;
+}
 
 // escape a value for safe interpolation into HTML text/attribute content.
 // DICOM tag values come from the file itself and are not trustworthy input.
@@ -28,19 +42,35 @@ function getNonce(): string {
 class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.CustomDocument> {
     public static register(
         context: vscode.ExtensionContext,
-    ): vscode.Disposable {
+    ): { provider: DICOMEditorProvider; disposable: vscode.Disposable } {
         const provider = new DICOMEditorProvider(context);
-        const providerRegistration = vscode.window.registerCustomEditorProvider(
+        const disposable = vscode.window.registerCustomEditorProvider(
             DICOMEditorProvider.viewType,
             provider,
             {
                 supportsMultipleEditorsPerDocument: false,
             },
         );
-        return providerRegistration;
+        return { provider, disposable };
     }
 
     private static readonly viewType = "dicomViewer.dcm";
+
+    // keyed by document.uri.toString() — see DocumentState above.
+    private readonly documents = new Map<string, DocumentState>();
+
+    // the Command Palette commands act on whichever DICOM editor tab is
+    // actually focused right now, not just "the most recently opened one".
+    // WebviewPanel#active reflects real-time focus, so this needs no
+    // separate bookkeeping to stay correct as the user switches tabs.
+    private getActiveDocument(): DocumentState | undefined {
+        for (const state of this.documents.values()) {
+            if (state.imagePanel.active) {
+                return state;
+            }
+        }
+        return undefined;
+    }
 
     // Path to the bundled worker_thread script (see src/imageWorker.ts and
     // build/esbuild.mjs, which produces this alongside dist/extension.js).
@@ -244,6 +274,12 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
             let hostPendingEdits: Record<string, any> = {};
             let hostPendingRemovals: any[] = [];
 
+            // set once the user explicitly hides the metadata panel via the
+            // "Toggle Metadata Panel" command, so switching away from and
+            // back to the image tab (see onDidChangeViewState below) doesn't
+            // just reopen it out from under them.
+            let metadataPanelUserHidden = false;
+
             // create the side-by-side view of metadata
             const createMetadataPanel = () => {
                 metadataPanel = vscode.window.createWebviewPanel(
@@ -410,22 +446,44 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 
             createMetadataPanel();
 
+            // backs the "Toggle Metadata Panel" command — see DocumentState.
+            const toggleMetadataPanel = () => {
+                if (metadataPanel) {
+                    metadataPanelUserHidden = true;
+                    disposeMetadataPanel();
+                } else {
+                    metadataPanelUserHidden = false;
+                    createMetadataPanel();
+                }
+            };
+
+            this.documents.set(document.uri.toString(), {
+                filepath,
+                imagePanel,
+                getMetadata: () => metadata,
+                toggleMetadataPanel,
+            });
+
             // if closed the image panel, also close the corresponding metadata
             // panel and terminate this document's decode worker
             imagePanel.onDidDispose(() => {
                 disposeMetadataPanel();
                 decodeWorker.dispose();
+                this.documents.delete(document.uri.toString());
             });
 
             // if focus is switched away from the image panel, also close the metadata panel
             // if focus switches back to the image panel, recreate the metadata panel
+            // (unless the user explicitly hid it via the toggle command)
             imagePanel.onDidChangeViewState((e) => {
                 if (!e.webviewPanel.visible) {
                     disposeMetadataPanel();
-                } else if (e.webviewPanel.visible && !metadataPanel) {
-                    if (!metadataPanel) {
-                        createMetadataPanel();
-                    }
+                } else if (
+                    e.webviewPanel.visible &&
+                    !metadataPanel &&
+                    !metadataPanelUserHidden
+                ) {
+                    createMetadataPanel();
                 }
             });
 
@@ -645,11 +703,161 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
 			</html>`;
         }
     }
+
+    // --- Command Palette commands (contributes.commands in package.json) ---
+
+    async openDicomCommand(): Promise<void> {
+        const uris = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            openLabel: "Open DICOM",
+            filters: { "DICOM files": ["dcm"] },
+        });
+        if (!uris || uris.length === 0) {
+            return;
+        }
+        await vscode.commands.executeCommand(
+            "vscode.openWith",
+            uris[0],
+            DICOMEditorProvider.viewType,
+        );
+    }
+
+    async exportMetadataCommand(): Promise<void> {
+        const state = this.getActiveDocument();
+        if (!state) {
+            vscode.window.showInformationMessage(
+                "Open a DICOM file to export its metadata.",
+            );
+            return;
+        }
+
+        const format = await vscode.window.showQuickPick(["JSON", "CSV"], {
+            placeHolder: "Export metadata as…",
+        });
+        if (!format) {
+            return;
+        }
+
+        const baseName = path.basename(state.filepath).replace(/\.dcm$/i, "");
+        const ext = format === "JSON" ? "json" : "csv";
+        const saveUri = await vscode.window.showSaveDialog({
+            defaultUri: vscode.Uri.file(
+                path.join(
+                    path.dirname(state.filepath),
+                    `${baseName}_metadata.${ext}`,
+                ),
+            ),
+            filters: format === "JSON" ? { JSON: ["json"] } : { CSV: ["csv"] },
+        });
+        if (!saveUri) {
+            return;
+        }
+
+        // metadata is [header, ...rows]; each row is [tag, name, vr, value, ...].
+        // structural rows (sequence headers/items) carry the same shape, so
+        // this flattens sequences into the export too rather than skipping them.
+        const rows = state
+            .getMetadata()
+            .slice(1)
+            .map((row: any[]) => ({
+                tag: row[0] ?? "",
+                name: row[1] ?? "",
+                vr: row[2] ?? "",
+                value: row[3] ?? "",
+            }));
+
+        let content: string;
+        if (format === "JSON") {
+            content = JSON.stringify(rows, null, 2);
+        } else {
+            const escapeCsvField = (value: unknown) => {
+                const s = String(value ?? "");
+                return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+            };
+            const lines = rows.map((row) =>
+                [row.tag, row.name, row.vr, row.value]
+                    .map(escapeCsvField)
+                    .join(","),
+            );
+            content = ["Tag,Name,VR,Value", ...lines].join("\n");
+        }
+
+        try {
+            await vscode.workspace.fs.writeFile(
+                saveUri,
+                Buffer.from(content, "utf8"),
+            );
+            vscode.window.showInformationMessage(
+                `Metadata exported to ${path.basename(saveUri.fsPath)}`,
+            );
+        } catch (e) {
+            // never log the error object itself — it can embed tag values
+            getLogger().error(
+                `Metadata export failed (${describeError(e).type})`,
+            );
+            vscode.window.showErrorMessage(
+                'Failed to export metadata. View the "DICOM Viewer" output channel for more detail.',
+            );
+        }
+    }
+
+    resetWindowLevelCommand(): void {
+        const state = this.getActiveDocument();
+        if (!state) {
+            vscode.window.showInformationMessage(
+                "Open a DICOM file to reset its window/level.",
+            );
+            return;
+        }
+        // a no-op if this file's image isn't interactive (color, JPEG
+        // Baseline/Extended, etc.) — imageWebview.js only registers a
+        // listener for this once it actually has windowable pixel data.
+        state.imagePanel.webview.postMessage({ command: "resetWindowLevel" });
+    }
+
+    toggleMetadataPanelCommand(): void {
+        const state = this.getActiveDocument();
+        if (!state) {
+            vscode.window.showInformationMessage(
+                "Open a DICOM file to toggle its metadata panel.",
+            );
+            return;
+        }
+        state.toggleMetadataPanel();
+    }
+
+    async sendFeedbackCommand(): Promise<void> {
+        await vscode.env.openExternal(
+            vscode.Uri.parse(
+                "https://github.com/alaramartin/dicom-viewer/issues",
+            ),
+        );
+    }
 }
 
 export function activate(context: vscode.ExtensionContext) {
     // register custom editor provider
-    context.subscriptions.push(DICOMEditorProvider.register(context));
+    const { provider, disposable } = DICOMEditorProvider.register(context);
+    context.subscriptions.push(disposable);
+
+    context.subscriptions.push(
+        vscode.commands.registerCommand("dicomViewer.openDicom", () =>
+            provider.openDicomCommand(),
+        ),
+        vscode.commands.registerCommand("dicomViewer.exportMetadata", () =>
+            provider.exportMetadataCommand(),
+        ),
+        vscode.commands.registerCommand("dicomViewer.resetWindowLevel", () =>
+            provider.resetWindowLevelCommand(),
+        ),
+        vscode.commands.registerCommand(
+            "dicomViewer.toggleMetadataPanel",
+            () => provider.toggleMetadataPanelCommand(),
+        ),
+        vscode.commands.registerCommand("dicomViewer.sendFeedback", () =>
+            provider.sendFeedbackCommand(),
+        ),
+    );
 }
 
 // called when extension is deactivated

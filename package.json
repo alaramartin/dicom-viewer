@@ -75,7 +75,50 @@
         ],
         "priority": "default"
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "dicomViewer.openDicom",
+        "title": "Open DICOM…",
+        "category": "DICOM"
+      },
+      {
+        "command": "dicomViewer.exportMetadata",
+        "title": "Export Metadata…",
+        "category": "DICOM"
+      },
+      {
+        "command": "dicomViewer.resetWindowLevel",
+        "title": "Reset Window/Level",
+        "category": "DICOM"
+      },
+      {
+        "command": "dicomViewer.toggleMetadataPanel",
+        "title": "Toggle Metadata Panel",
+        "category": "DICOM"
+      },
+      {
+        "command": "dicomViewer.sendFeedback",
+        "title": "Send Feedback",
+        "category": "DICOM"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "dicomViewer.exportMetadata",
+          "when": "activeCustomEditorId == dicomViewer.dcm"
+        },
+        {
+          "command": "dicomViewer.resetWindowLevel",
+          "when": "activeCustomEditorId == dicomViewer.dcm"
+        },
+        {
+          "command": "dicomViewer.toggleMetadataPanel",
+          "when": "activeCustomEditorId == dicomViewer.dcm"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

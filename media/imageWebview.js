@@ -276,6 +276,13 @@
                     imgEl.src = message.base64Image;
                 }
             }
+        } else if (message.command === "resetWindowLevel") {
+            // from the "DICOM: Reset Window/Level" Command Palette command —
+            // a no-op if this file never got interactive pixel data (color
+            // images, JPEG Baseline/Extended, etc.), same as double-click.
+            if (imageData) {
+                resetWindow();
+            }
         } else if (message.command === "frameChangeError") {
             // revert the slider to the last frame that actually rendered
             latestRequestedFrame = currentFrameIndex;
