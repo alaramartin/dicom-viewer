@@ -14,6 +14,7 @@ Available on [VS Code Marketplace](https://marketplace.visualstudio.com/items?it
 - **Sequences**: Supports sequence elements (viewing and editing)
 - **Compressed images**: Displays and edits DICOMs compressed with RLE Lossless, JPEG Baseline, JPEG Extended (8-bit), JPEG Lossless, JPEG-LS, and JPEG 2000 — the full pixel data is decoded, not just the metadata
 - **Window/level**: Honors the file's real window/level and rescale values (accurate Hounsfield Units on CT), and supports interactive adjustment — drag on the image to change brightness/contrast, double-click to reset
+- **Multi-frame navigation**: A frame slider, prev/next buttons, and arrow-key stepping for multi-slice series and cine loops
 
 ### Examples
 

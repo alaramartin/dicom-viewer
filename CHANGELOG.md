@@ -2,6 +2,10 @@
 
 All notable changes to the "DICOM Viewer & Editor" extension are documented here.
 
+## [1.7.0] - 2026-08-21
+
+- Added multi-frame navigation: files with more than one frame (multi-slice series, cine loops) now show a frame slider, previous/next buttons, and a frame counter below the image, with left/right arrow-key stepping. Works for both uncompressed and compressed transfer syntaxes, and for both grayscale and color images. Window/level settings are preserved as you move between frames instead of resetting.
+
 ## [1.6.1] - 2026-08-21
 
 - Grayscale images now honor the file's `WindowCenter`/`WindowWidth`/`RescaleSlope`/`RescaleIntercept` tags when present, instead of always normalizing to the pixel data's own min/max. Displayed values are now real Hounsfield Units on CT, and images match what other DICOM viewers show. Falls back to the previous behavior when those tags are absent.
