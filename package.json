@@ -20,6 +20,7 @@
   },
   "categories": [
     "Visualization",
+    "Data Science",
     "Other"
   ],
   "keywords": [
@@ -33,7 +34,15 @@
     "medical",
     "radiology",
     "pacs",
-    "imaging"
+    "imaging",
+    "de-identification",
+    "anonymization",
+    "medical imaging",
+    "pydicom",
+    "cornerstone",
+    "nifti",
+    "ct",
+    "mri"
   ],
   "galleryBanner": {
     "color": "#1A1A2E",
