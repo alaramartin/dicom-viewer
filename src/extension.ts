@@ -5,6 +5,10 @@ import { getMetadata, getNumberOfFrames } from "./getImage";
 import { ImageDecodeWorker } from "./imageDecodeWorker";
 import { saveDicomEdits } from "./editDicom";
 import { getLogger, describeError } from "./logger";
+import {
+    markReviewPromptSession,
+    notifyDicomFileOpened,
+} from "./reviewPrompt";
 
 // State the Command Palette commands below need for whichever DICOM editor
 // tab is currently focused. One entry per open document, added when its
@@ -261,6 +265,16 @@ class DICOMEditorProvider implements vscode.CustomReadonlyEditorProvider<vscode.
                         this.context.subscriptions,
                     );
                 }
+            }
+
+            // best-effort, one-time-ever "enjoying this?" nudge -- only
+            // counts files that actually parsed (base64Image is only ""
+            // when the try/catch above caught a real decode failure;
+            // "compressed"/"no-image"/a real image all count as a
+            // successful open). Never awaited: this must not delay or
+            // affect opening the file itself.
+            if (base64Image !== "") {
+                void notifyDicomFileOpened(this.context);
             }
 
             let metadataPanel: vscode.WebviewPanel | undefined;
@@ -887,6 +901,11 @@ export function activate(context: vscode.ExtensionContext) {
     // register custom editor provider
     const { provider, disposable } = DICOMEditorProvider.register(context);
     context.subscriptions.push(disposable);
+
+    // counts this activation toward the review prompt's "≥3 sessions"
+    // requirement -- one activation per VS Code window/reload. Never
+    // awaited: must not delay activation.
+    void markReviewPromptSession(context);
 
     context.subscriptions.push(
         vscode.commands.registerCommand("dicomViewer.openDicom", () =>

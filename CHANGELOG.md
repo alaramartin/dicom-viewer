@@ -2,6 +2,14 @@
 
 All notable changes to the "DICOM Viewer & Editor" extension are documented here.
 
+## [1.8.0] - 2026-09-05
+
+- Added Command Palette commands: **Open DICOM…** to browse for a file directly, plus **Export Metadata…**, **Reset Window/Level**, and **Toggle Metadata Panel**, which appear while a DICOM editor tab is focused. **Send Feedback** opens a pre-filled GitHub issue so bug reports arrive with the details already filled in.
+- Added metadata search: filter the table by tag, name, or value as you type, so finding a single attribute in a long header no longer means scrolling.
+- Added right-click copy in the metadata table — copy a tag, a value, or a whole row to the clipboard.
+- Pixel decoding now runs off the extension host thread, so VS Code stays responsive while large or compressed files are being read. Files that contain no image data now explain that instead of showing a generic failure.
+- Added a one-time prompt asking for a marketplace rating. It appears once ever, only after the extension has been used across several sessions, and never again regardless of how you answer.
+
 ## [1.7.0] - 2026-08-21
 
 - Added multi-frame navigation: files with more than one frame (multi-slice series, cine loops) now show a frame slider, previous/next buttons, and a frame counter below the image, with left/right arrow-key stepping. Works for both uncompressed and compressed transfer syntaxes, and for both grayscale and color images. Window/level settings are preserved as you move between frames instead of resetting.
